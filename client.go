@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/aws/smithy-go/logging"
@@ -72,20 +73,7 @@ func New(
 		}
 	}
 
-	if c.Logger == nil {
-		c.Logger = logging.Nop{}
-	}
-
 	return &c, nil
-}
-
-// Set a logger function to output DEBUG and WARN messages from the Extended Client. Provided logger
-// must conform to the AWS logging interface.
-func WithLogger(l logging.Logger) ClientOption {
-	return func(c *Client) error {
-		c.Logger = l
-		return nil
-	}
 }
 
 // Set the MessageSizeThreshold to some other value (in bytes). By default this is `262144` (256
@@ -199,24 +187,14 @@ func (c *Client) SendMessage(
 	input := *params
 
 	if len(input.MessageAttributes) > maxAllowedAttributes {
-		// TODO: update type to match AWS errors
 		return nil, fmt.Errorf("number of message attributes [%d] exceeds the allowed maximum for large-payload messages [%d]", len(input.MessageAttributes), maxAllowedAttributes)
 	}
 
 	if c.alwaysThroughS3 || c.messageExceedsThreshold(input.MessageBody, input.MessageAttributes) {
-		updatedAttributes := make(map[string]types.MessageAttributeValue, len(input.MessageAttributes)+1)
-		for k, v := range input.MessageAttributes {
-			updatedAttributes[k] = v
-		}
-
-		updatedAttributes[c.reservedAttrName] = types.MessageAttributeValue{
-			DataType:    aws.String("Number"),
-			StringValue: aws.String(strconv.Itoa(len(*input.MessageBody))),
-		}
-
-		input.MessageAttributes = updatedAttributes
-
+		// generate UUID filename
 		s3Key := uuid.New().String()
+
+		// upload large payload to S3
 		_, err := c.s3c.PutObject(ctx, &s3.PutObjectInput{
 			Bucket: &c.bucketName,
 			Key:    aws.String(s3Key),
@@ -224,9 +202,10 @@ func (c *Client) SendMessage(
 		})
 
 		if err != nil {
-			return nil, fmt.Errorf("unable to upload large-payload to s3: %w", err)
+			return nil, fmt.Errorf("unable to upload large payload to s3: %w", err)
 		}
 
+		// create an s3 pointer that will be uploaded to SQS in place of the large payload
 		asBytes, err := json.Marshal(&s3Pointer{
 			S3BucketName: c.bucketName,
 			S3Key:        s3Key,
@@ -234,9 +213,23 @@ func (c *Client) SendMessage(
 		})
 
 		if err != nil {
-			return nil, fmt.Errorf("unable to upload large-payload to s3: %w", err)
+			return nil, fmt.Errorf("unable to marshal S3 pointer: %w", err)
 		}
 
+		// copy over all attributes, leaving space for our reserved attribute
+		updatedAttributes := make(map[string]types.MessageAttributeValue, len(input.MessageAttributes)+1)
+		for k, v := range input.MessageAttributes {
+			updatedAttributes[k] = v
+		}
+
+		// assign the reserved attribute to a number containing the size of the original body
+		updatedAttributes[c.reservedAttrName] = types.MessageAttributeValue{
+			DataType:    aws.String("Number"),
+			StringValue: aws.String(strconv.Itoa(len(*input.MessageBody))),
+		}
+
+		// override attributes and body in the original message
+		input.MessageAttributes = updatedAttributes
 		input.MessageBody = aws.String(string(asBytes))
 	}
 
@@ -346,19 +339,22 @@ func (c *Client) ReceiveMessage(ctx context.Context, params *sqs.ReceiveMessageI
 			}
 
 			var ptr s3Pointer
+
+			// attempt to unmarshal the message body into an S3 pointer
 			err := json.Unmarshal([]byte(*m.Body), &ptr)
 
 			if err != nil {
-				return fmt.Errorf("error when unmarshalling s3 pointer: %s", err)
+				return fmt.Errorf("error when unmarshalling s3 pointer: %w", err)
 			}
 
+			// read the location of the S3 pointer to get full message
 			s3Resp, err := c.s3c.GetObject(ctx, &s3.GetObjectInput{
 				Bucket: &ptr.S3BucketName,
 				Key:    &ptr.S3Key,
 			})
 
 			if err != nil {
-				return fmt.Errorf("error when reading from s3 (%s/%s): %s", ptr.S3BucketName, ptr.S3Key, err)
+				return fmt.Errorf("error when reading from s3 (%s/%s): %w", ptr.S3BucketName, ptr.S3Key, err)
 			}
 
 			defer s3Resp.Body.Close()
@@ -366,9 +362,10 @@ func (c *Client) ReceiveMessage(ctx context.Context, params *sqs.ReceiveMessageI
 			bodyBytes, err := io.ReadAll(s3Resp.Body)
 
 			if err != nil {
-				return fmt.Errorf("error when reading buffer: %s", err)
+				return fmt.Errorf("error when reading buffer: %w", err)
 			}
 
+			// override the body and receiptHandle on the original message
 			sqsResp.Messages[i].Body = aws.String(string(bodyBytes))
 			sqsResp.Messages[i].ReceiptHandle = aws.String(newExtendedReceiptHandle(ptr.S3BucketName, ptr.S3Key, *m.ReceiptHandle))
 			return nil
@@ -413,7 +410,7 @@ func (c *Client) RetrieveLambdaEvent(ctx context.Context, evt *events.SQSEvent) 
 			err := json.Unmarshal([]byte(r.Body), &ptr)
 
 			if err != nil {
-				return fmt.Errorf("error when unmarshalling s3 pointer: %s", err)
+				return fmt.Errorf("error when unmarshalling s3 pointer: %w", err)
 			}
 
 			s3Resp, err := c.s3c.GetObject(ctx, &s3.GetObjectInput{
@@ -422,7 +419,7 @@ func (c *Client) RetrieveLambdaEvent(ctx context.Context, evt *events.SQSEvent) 
 			})
 
 			if err != nil {
-				return fmt.Errorf("error when reading from s3 (%s/%s): %s", ptr.S3BucketName, ptr.S3Key, err)
+				return fmt.Errorf("error when reading from s3 (%s/%s): %w", ptr.S3BucketName, ptr.S3Key, err)
 			}
 
 			defer s3Resp.Body.Close()
@@ -430,7 +427,7 @@ func (c *Client) RetrieveLambdaEvent(ctx context.Context, evt *events.SQSEvent) 
 			bodyBytes, err := io.ReadAll(s3Resp.Body)
 
 			if err != nil {
-				return fmt.Errorf("error when reading buffer: %s", err)
+				return fmt.Errorf("error when reading buffer: %w", err)
 			}
 
 			copyRecords[i].Body = string(bodyBytes)
@@ -538,5 +535,50 @@ func (c *Client) DeleteMessage(ctx context.Context, params *sqs.DeleteMessageInp
 // batch request can result in a combination of successful and unsuccessful actions, you should
 // check for batch errors even when the call returns an HTTP status code of 200.
 func (c *Client) DeleteMessageBatch(ctx context.Context, params *sqs.DeleteMessageBatchInput, optFns ...func(*sqs.Options)) (*sqs.DeleteMessageBatchOutput, error) {
+	input := *params
+	copyEntries := make([]types.DeleteMessageBatchRequestEntry, len(input.Entries))
+	deleteRequests := map[string]s3types.Delete{}
+
+	for i, e := range input.Entries {
+		// copy over the entry initially, regardless
+		copyEntries[i] = e
+
+		// check to see if ReceiptHandle fits extended format
+		bucket, key, handle := parseExtendedReceiptHandle(*e.ReceiptHandle)
+		if bucket != "" && key != "" && handle != "" {
+			// if this is the first time we've seen a bucket, instantiate the array
+			if _, ok := deleteRequests[bucket]; !ok {
+				deleteRequests[bucket] = s3types.Delete{Objects: []s3types.ObjectIdentifier{}}
+			}
+
+			req := deleteRequests[bucket]
+
+			// append the current key to the list of objects to be deleted
+			req.Objects = append(req.Objects, s3types.ObjectIdentifier{Key: &key})
+
+			// override the current entry to use new handle
+			copyEntries[i].ReceiptHandle = &handle
+		}
+	}
+
+	g := new(errgroup.Group)
+
+	// for each delete request (grouped by bucket), send `s3.DeleteObjects` call in parallel
+	for b, d := range deleteRequests {
+		b, d := b, d
+		g.Go(func() error {
+			_, err := c.s3c.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+				Bucket: &b,
+				Delete: &d,
+			})
+
+			return err
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
 	return c.Client.DeleteMessageBatch(ctx, params, optFns...)
 }
