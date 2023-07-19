@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,9 +19,8 @@ import (
 
 const (
 	maxAllowedAttributes = 10 - 1 // 1 is reserved for the extended client attribute
-	// RECEIPT_HANDLER_MATCHER = re.compile(r"^-\.\.s3BucketName\.\.-(.*)-\.\.s3BucketName\.\.--\.\.s3Key\.\.-(.*)-\.\.s3Key\.\.-(.*)")
-	s3BucketNameMarker = "-..s3BucketName..-"
-	s3KeyMarker        = "-..s3Key..-"
+	s3BucketNameMarker   = "-..s3BucketName..-"
+	s3KeyMarker          = "-..s3Key..-"
 )
 
 type Client struct {
@@ -256,20 +256,89 @@ func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBa
 // new attributes might be added. If you write code that calls this action, we recommend that you
 // structure your code so that it can handle new attributes gracefully.
 func (c *Client) ReceiveMessage(ctx context.Context, params *sqs.ReceiveMessageInput, optFns ...func(*sqs.Options)) (*sqs.ReceiveMessageOutput, error) {
-	// if MessageAttributeNames doesn't include RESERVED_ATTRIBUTE_NAME and not 'All' in MessageAttributeNames or '.*' in MessageAttributeNames
-	// 		add RESERVED_ATTRIBUTE_NAME to MessageAttributeNames
-	// call underlying RetrieveMessage
-	// for each message in response
-	// 		extract MessageAttributes, Body, ReceiptHandle
-	// 		ensure RESERVED_ATTRIBUTE_NAME in MessageAttributes
-	// 		ensure Body is List, of length 2, and item 0 is equal to MESSAGE_POINTER_CLASS
-	// 		parse element[1] and extract the s3BucketName and s3Key
-	// 		extract message from S3
-	// 		update receipt_handle to be:
-	// 			{S3_BUCKET_NAME_MARKER}{bucket}{S3_BUCKET_NAME_MARKER}{S3_KEY_MARKER}{key}{S3_KEY_MARKER}{receipt_handle}
-	// 		update message body with one from S3
-	// 		update message attributes to be all except for RESERVED_ATTRIBUTE_NAME
-	return c.Client.ReceiveMessage(ctx, params, optFns...)
+	input := *params
+	includesAttributeName := false
+	includesAll := false
+
+	// copy attributes over to avoid mutating
+	messageAttributeCopy := make([]string, len(input.MessageAttributeNames)+1)
+	for i, a := range input.MessageAttributeNames {
+		messageAttributeCopy[i] = a
+		if a == "All" || a == ".*" {
+			includesAll = true
+		} else if a == c.attributeName {
+			includesAttributeName = true
+		}
+	}
+
+	// if the reserved attribute name is not present, add it to the list
+	if !includesAttributeName && !includesAll {
+		messageAttributeCopy[len(input.MessageAttributeNames)] = c.attributeName
+		input.MessageAttributeNames = messageAttributeCopy
+	}
+
+	// call underlying SQS ReceiveMessage
+	sqsResp, err := c.Client.ReceiveMessage(ctx, &input, optFns...)
+
+	if err != nil {
+		return nil, err
+	}
+
+	for i, m := range sqsResp.Messages {
+		// TODO: goroutines here
+
+		// check for reserved attribute name, skip processing if not present
+		if _, ok := m.MessageAttributes[c.attributeName]; !ok {
+			continue
+		}
+
+		var ptr s3Pointer
+		err := json.Unmarshal([]byte(*m.Body), &ptr)
+
+		if err != nil {
+			return nil, err
+		}
+
+		s3Resp, err := c.s3c.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: &ptr.S3BucketName,
+			Key:    &ptr.S3Key,
+		})
+
+		if err != nil {
+			return nil, err
+		}
+
+		defer s3Resp.Body.Close()
+
+		bodyBytes, err := ioutil.ReadAll(s3Resp.Body)
+
+		if err != nil {
+			return nil, err
+		}
+
+		sqsResp.Messages[i].Body = aws.String(string(bodyBytes))
+		sqsResp.Messages[i].ReceiptHandle = aws.String(newExtendedReceiptHandle(ptr.S3BucketName, ptr.S3Key, *m.ReceiptHandle))
+		delete(sqsResp.Messages[i].MessageAttributes, c.attributeName)
+	}
+
+	return sqsResp, nil
+}
+
+func newExtendedReceiptHandle(bucket, key, handle string) string {
+	return fmt.Sprintf(
+		"%s%s%s%s%s%s%s",
+		s3BucketNameMarker,
+		bucket,
+		s3BucketNameMarker,
+		s3KeyMarker,
+		key,
+		s3KeyMarker,
+		handle,
+	)
+}
+
+func parseExtendedReceiptHandle(extendedHandle string) (bucket, key, handle string) {
+	return "", "", ""
 }
 
 // Deletes the specified message from the specified queue. To select the message to delete, use the
