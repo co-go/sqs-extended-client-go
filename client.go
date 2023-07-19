@@ -186,10 +186,6 @@ func (c *Client) SendMessage(
 	// copy to avoid mutating params
 	input := *params
 
-	if len(input.MessageAttributes) > maxAllowedAttributes {
-		return nil, fmt.Errorf("number of message attributes [%d] exceeds the allowed maximum for large-payload messages [%d]", len(input.MessageAttributes), maxAllowedAttributes)
-	}
-
 	if c.alwaysThroughS3 || c.messageExceedsThreshold(input.MessageBody, input.MessageAttributes) {
 		// generate UUID filename
 		s3Key := uuid.New().String()
@@ -250,8 +246,66 @@ func (c *Client) SendMessage(
 // characters (http://www.w3.org/TR/REC-xml/#charsets) . If you don't specify the DelaySeconds
 // parameter for an entry, Amazon SQS uses the default value for the queue.
 func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBatchInput, optFns ...func(*sqs.Options)) (*sqs.SendMessageBatchOutput, error) {
-	// TODO: implement
-	return c.Client.SendMessageBatch(ctx, params, optFns...)
+	input := *params
+	copyEntries := make([]types.SendMessageBatchRequestEntry, len(input.Entries))
+	g := new(errgroup.Group)
+
+	for i, e := range input.Entries {
+		// always copy the entry, regardless of size
+		copyEntries[i] = e
+
+		if c.alwaysThroughS3 || c.messageExceedsThreshold(e.MessageBody, e.MessageAttributes) {
+			// generate UUID filename
+			s3Key := uuid.New().String()
+
+			// upload large payload to S3
+			g.Go(func() error {
+				_, err := c.s3c.PutObject(ctx, &s3.PutObjectInput{
+					Bucket: &c.bucketName,
+					Key:    aws.String(s3Key),
+					Body:   strings.NewReader(*e.MessageBody),
+				})
+
+				if err != nil {
+					return fmt.Errorf("unable to upload large payload to s3: %w", err)
+				}
+
+				return nil
+			})
+
+			// create an s3 pointer that will be uploaded to SQS in place of the large payload
+			asBytes, err := json.Marshal(&s3Pointer{
+				S3BucketName: c.bucketName,
+				S3Key:        s3Key,
+				class:        c.pointerClass,
+			})
+
+			if err != nil {
+				return nil, fmt.Errorf("unable to marshal S3 pointer: %w", err)
+			}
+
+			// copy over all attributes, leaving space for our reserved attribute
+			updatedAttributes := make(map[string]types.MessageAttributeValue, len(e.MessageAttributes)+1)
+			for k, v := range e.MessageAttributes {
+				updatedAttributes[k] = v
+			}
+
+			// assign the reserved attribute to a number containing the size of the original body
+			updatedAttributes[c.reservedAttrName] = types.MessageAttributeValue{
+				DataType:    aws.String("Number"),
+				StringValue: aws.String(strconv.Itoa(len(*e.MessageBody))),
+			}
+
+			// override attributes and body in the original message
+			copyEntries[i].MessageAttributes = updatedAttributes
+			copyEntries[i].MessageBody = aws.String(string(asBytes))
+		}
+	}
+
+	// override entries with our copied ones
+	input.Entries = copyEntries
+
+	return c.Client.SendMessageBatch(ctx, &input, optFns...)
 }
 
 // ReceiveMessage is a wrapper for the `sqs.ReceiveMessage` function, but it automatically retrieves
