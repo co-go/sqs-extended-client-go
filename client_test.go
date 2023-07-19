@@ -40,3 +40,17 @@ func TestS3PointerUnmarshalInvalidLength(t *testing.T) {
 	err := json.Unmarshal(str, &p)
 	assert.ErrorContains(t, err, "invalid pointer format, expected length 2, but received [3]")
 }
+
+func TestParseExtendedReceiptHandle(t *testing.T) {
+	bucket, key, handle := parseExtendedReceiptHandle("-..s3BucketName..-some-bucket-..s3BucketName..--..s3Key..-some-key-..s3Key..-abcdefg")
+	assert.Equal(t, "some-bucket", bucket)
+	assert.Equal(t, "some-key", key)
+	assert.Equal(t, "abcdefg", handle)
+}
+
+func TestParseExtendedReceiptHandleFailure(t *testing.T) {
+	bucket, key, handle := parseExtendedReceiptHandle("nonExtendedHandle")
+	assert.Equal(t, "", bucket)
+	assert.Equal(t, "", key)
+	assert.Equal(t, "", handle)
+}

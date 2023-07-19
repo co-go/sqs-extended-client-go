@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 
+	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
@@ -324,6 +326,10 @@ func (c *Client) ReceiveMessage(ctx context.Context, params *sqs.ReceiveMessageI
 	return sqsResp, nil
 }
 
+func (c *Client) ParseLambdaMessage(ctx context.Context, sqs events.SQSEvent) {
+	// TODO: figure this out
+}
+
 func newExtendedReceiptHandle(bucket, key, handle string) string {
 	return fmt.Sprintf(
 		"%s%s%s%s%s%s%s",
@@ -337,8 +343,17 @@ func newExtendedReceiptHandle(bucket, key, handle string) string {
 	)
 }
 
+var extendedReceiptHandleRegex = regexp.MustCompile(`^-\.\.s3BucketName\.\.-(.*)-\.\.s3BucketName\.\.--\.\.s3Key\.\.-(.*)-\.\.s3Key\.\.-(.*)`)
+
 func parseExtendedReceiptHandle(extendedHandle string) (bucket, key, handle string) {
-	return "", "", ""
+	match := extendedReceiptHandleRegex.FindStringSubmatch(extendedHandle)
+
+	// we're expecting 3 matches; "first" match will be the entire string
+	if len(match) != 4 {
+		return "", "", ""
+	}
+
+	return match[1], match[2], match[3]
 }
 
 // Deletes the specified message from the specified queue. To select the message to delete, use the
@@ -356,10 +371,24 @@ func parseExtendedReceiptHandle(extendedHandle string) (bucket, key, handle stri
 // request. You should ensure that your application is idempotent, so that receiving a message more
 // than once does not cause issues.
 func (c *Client) DeleteMessage(ctx context.Context, params *sqs.DeleteMessageInput, optFns ...func(*sqs.Options)) (*sqs.DeleteMessageOutput, error) {
-	// if the RECEIPT_HANDLER_MATCHER regex matches the ReceiptHandle
-	// s3.delete_objects for the provided S3 bucket and path
-	// call source fn
-	return c.Client.DeleteMessage(ctx, params, optFns...)
+	input := *params
+
+	bucket, key, handle := parseExtendedReceiptHandle(*input.ReceiptHandle)
+	if bucket != "" && key != "" && handle != "" {
+		_, err := c.s3c.DeleteObject(ctx, &s3.DeleteObjectInput{
+			Bucket: &bucket,
+			Key:    &key,
+		})
+
+		if err != nil {
+			return nil, err
+		}
+
+		// override extended handle with actual sqs handle
+		input.ReceiptHandle = &handle
+	}
+
+	return c.Client.DeleteMessage(ctx, &input, optFns...)
 }
 
 func (c *Client) DeleteMessageBatch(ctx context.Context, params *sqs.DeleteMessageBatchInput, optFns ...func(*sqs.Options)) (*sqs.DeleteMessageBatchOutput, error) {
