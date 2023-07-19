@@ -16,7 +16,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
+	"github.com/aws/smithy-go/logging"
 	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -29,6 +31,7 @@ const (
 // and deleting messages.
 type Client struct {
 	*sqs.Client
+	logging.Logger
 	s3c                  *s3.Client
 	bucketName           string
 	messageSizeThreshold int64
@@ -69,12 +72,18 @@ func New(
 		}
 	}
 
+	if c.Logger == nil {
+		c.Logger = logging.Nop{}
+	}
+
 	return &c, nil
 }
 
-// TODO: decide on the interface here, should probably be consistent with AWS logger
-func WithLogger() ClientOption {
+// Set a logger function to output DEBUG and WARN messages from the Extended Client. Provided logger
+// must conform to the AWS logging interface.
+func WithLogger(l logging.Logger) ClientOption {
 	return func(c *Client) error {
+		c.Logger = l
 		return nil
 	}
 }
@@ -325,26 +334,22 @@ func (c *Client) ReceiveMessage(ctx context.Context, params *sqs.ReceiveMessageI
 		return nil, err
 	}
 
-	var wg sync.WaitGroup
+	g := new(errgroup.Group)
 
 	for i, m := range sqsResp.Messages {
-		wg.Add(1)
+		i, m := i, m // https://golang.org/doc/faq#closures_and_goroutines
 
-		go func(i int, m types.Message) {
-			defer wg.Done()
-
+		g.Go(func() error {
 			// check for reserved attribute name, skip processing if not present
 			if _, ok := m.MessageAttributes[c.reservedAttrName]; !ok {
-				return
+				return nil
 			}
 
 			var ptr s3Pointer
 			err := json.Unmarshal([]byte(*m.Body), &ptr)
 
 			if err != nil {
-				// TODO: change to logger
-				fmt.Printf("error when unmarshalling s3 pointer: %s\n", err)
-				return
+				return fmt.Errorf("error when unmarshalling s3 pointer: %s", err)
 			}
 
 			s3Resp, err := c.s3c.GetObject(ctx, &s3.GetObjectInput{
@@ -353,8 +358,7 @@ func (c *Client) ReceiveMessage(ctx context.Context, params *sqs.ReceiveMessageI
 			})
 
 			if err != nil {
-				fmt.Printf("error when reading from s3 (%s/%s): %s\n", ptr.S3BucketName, ptr.S3Key, err)
-				return
+				return fmt.Errorf("error when reading from s3 (%s/%s): %s", ptr.S3BucketName, ptr.S3Key, err)
 			}
 
 			defer s3Resp.Body.Close()
@@ -362,16 +366,18 @@ func (c *Client) ReceiveMessage(ctx context.Context, params *sqs.ReceiveMessageI
 			bodyBytes, err := io.ReadAll(s3Resp.Body)
 
 			if err != nil {
-				fmt.Printf("error when reading buffer: %s\n", err)
-				return
+				return fmt.Errorf("error when reading buffer: %s", err)
 			}
 
 			sqsResp.Messages[i].Body = aws.String(string(bodyBytes))
 			sqsResp.Messages[i].ReceiptHandle = aws.String(newExtendedReceiptHandle(ptr.S3BucketName, ptr.S3Key, *m.ReceiptHandle))
-		}(i, m)
+			return nil
+		})
 	}
 
-	wg.Wait()
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
 
 	return sqsResp, nil
 }
@@ -391,28 +397,23 @@ func (c *Client) ReceiveMessage(ctx context.Context, params *sqs.ReceiveMessageI
 // record's ReceiptHandle, setting it to a unique pattern for the Extended SQS Client to be able to
 // delete the S3 file when the SQS message is deleted (see `DeleteMessage` for more details).
 func (c *Client) RetrieveLambdaEvent(ctx context.Context, evt *events.SQSEvent) (*events.SQSEvent, error) {
-	var wg sync.WaitGroup
+	g := new(errgroup.Group)
 	copyRecords := make([]events.SQSMessage, len(evt.Records))
+
 	for i, r := range evt.Records {
-		wg.Add(1)
+		i, r := i, r // https://golang.org/doc/faq#closures_and_goroutines
 
-		go func(i int, r events.SQSMessage) {
-			defer wg.Done()
-
-			copyRecords[i] = r
-
+		g.Go(func() error {
 			// check for reserved attribute name, skip processing if not present
 			if _, ok := r.MessageAttributes[c.reservedAttrName]; !ok {
-				return
+				return nil
 			}
 
 			var ptr s3Pointer
 			err := json.Unmarshal([]byte(r.Body), &ptr)
 
 			if err != nil {
-				// TODO: change to logger
-				fmt.Printf("error when unmarshalling s3 pointer: %s\n", err)
-				return
+				return fmt.Errorf("error when unmarshalling s3 pointer: %s", err)
 			}
 
 			s3Resp, err := c.s3c.GetObject(ctx, &s3.GetObjectInput{
@@ -421,8 +422,7 @@ func (c *Client) RetrieveLambdaEvent(ctx context.Context, evt *events.SQSEvent) 
 			})
 
 			if err != nil {
-				fmt.Printf("error when reading from s3 (%s/%s): %s\n", ptr.S3BucketName, ptr.S3Key, err)
-				return
+				return fmt.Errorf("error when reading from s3 (%s/%s): %s", ptr.S3BucketName, ptr.S3Key, err)
 			}
 
 			defer s3Resp.Body.Close()
@@ -430,16 +430,18 @@ func (c *Client) RetrieveLambdaEvent(ctx context.Context, evt *events.SQSEvent) 
 			bodyBytes, err := io.ReadAll(s3Resp.Body)
 
 			if err != nil {
-				fmt.Printf("error when reading buffer: %s\n", err)
-				return
+				return fmt.Errorf("error when reading buffer: %s", err)
 			}
 
 			copyRecords[i].Body = string(bodyBytes)
 			copyRecords[i].ReceiptHandle = newExtendedReceiptHandle(ptr.S3BucketName, ptr.S3Key, r.ReceiptHandle)
-		}(i, r)
+			return nil
+		})
 	}
 
-	wg.Wait()
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
 
 	dup := *evt
 	dup.Records = copyRecords
