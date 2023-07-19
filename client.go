@@ -117,13 +117,14 @@ func (c *Client) attributeSize(attributes map[string]types.MessageAttributeValue
 	return sum.Load()
 }
 
-type payloadS3Pointer struct {
+type s3Pointer struct {
 	S3BucketName string
 	S3Key        string
 	class        string
 }
 
-func (p *payloadS3Pointer) UnmarshalJSON(in []byte) error {
+func (p *s3Pointer) UnmarshalJSON(in []byte) error {
+	// TODO: given the trivial structure, might just use Regex to parse out fields
 	ptr := []interface{}{}
 
 	if err := json.Unmarshal(in, &ptr); err != nil {
@@ -134,15 +135,15 @@ func (p *payloadS3Pointer) UnmarshalJSON(in []byte) error {
 		return fmt.Errorf("invalid pointer format, expected length 2, but received [%d]", len(ptr))
 	}
 
-	p.S3BucketName = ptr[1].(payloadS3Pointer).S3BucketName
-	p.S3Key = ptr[1].(payloadS3Pointer).S3Key
+	p.S3BucketName = ptr[1].(map[string]interface{})["s3BucketName"].(string)
+	p.S3Key = ptr[1].(map[string]interface{})["s3Key"].(string)
 	p.class = ptr[0].(string)
 
 	return nil
 }
 
-func (p *payloadS3Pointer) MarshalJSON() ([]byte, error) {
-	return json.Marshal(&[]interface{}{p.class, p})
+func (p *s3Pointer) MarshalJSON() ([]byte, error) {
+	return []byte(fmt.Sprintf(`["%s",{"s3BucketName":"%s","s3Key":"%s"}]`, p.class, p.S3BucketName, p.S3Key)), nil
 }
 
 // Extended SQS Client wrapper around `sqs.SendMessage`. If the provided message exceeds the message
@@ -190,7 +191,7 @@ func (c *Client) SendMessage(
 			return nil, fmt.Errorf("unable to upload large-payload to s3: %w", err)
 		}
 
-		asBytes, err := json.Marshal(&payloadS3Pointer{
+		asBytes, err := json.Marshal(&s3Pointer{
 			S3BucketName: c.bucketName,
 			S3Key:        s3Key,
 			class:        c.pointerClass,
