@@ -32,7 +32,7 @@ type Client struct {
 	messageSizeThreshold int64
 	alwaysThroughS3      bool
 	pointerClass         string
-	attributeName        string
+	reservedAttrName     string
 }
 
 type ClientOption func(*Client) error
@@ -49,7 +49,7 @@ func New(
 		bucketName:           bucketName,
 		messageSizeThreshold: 262144, // 256 KiB
 		pointerClass:         "software.amazon.payloadoffloading.PayloadS3Pointer",
-		attributeName:        "ExtendedPayloadSize",
+		reservedAttrName:     "ExtendedPayloadSize",
 	}
 
 	for _, optFn := range optFns {
@@ -82,10 +82,10 @@ func WithAlwaysS3(alwaysS3 bool) ClientOption {
 	}
 }
 
-// Override the default AttributeName with a custom value (i.e. "SQSLargePayloadSize")
-func WithAttributeName(attributeName string) ClientOption {
+// Override the default ReservedAttributeName with a custom value (i.e. "SQSLargePayloadSize")
+func WithReservedAttributeName(attributeName string) ClientOption {
 	return func(c *Client) error {
-		c.attributeName = attributeName
+		c.reservedAttrName = attributeName
 		return nil
 	}
 }
@@ -175,7 +175,7 @@ func (c *Client) SendMessage(
 			updatedAttributes[k] = v
 		}
 
-		updatedAttributes[c.attributeName] = types.MessageAttributeValue{
+		updatedAttributes[c.reservedAttrName] = types.MessageAttributeValue{
 			DataType:    aws.String("Number"),
 			StringValue: aws.String(strconv.Itoa(len(*input.MessageBody))),
 		}
@@ -268,14 +268,14 @@ func (c *Client) ReceiveMessage(ctx context.Context, params *sqs.ReceiveMessageI
 		messageAttributeCopy[i] = a
 		if a == "All" || a == ".*" {
 			includesAll = true
-		} else if a == c.attributeName {
+		} else if a == c.reservedAttrName {
 			includesAttributeName = true
 		}
 	}
 
 	// if the reserved attribute name is not present, add it to the list
 	if !includesAttributeName && !includesAll {
-		messageAttributeCopy[len(input.MessageAttributeNames)] = c.attributeName
+		messageAttributeCopy[len(input.MessageAttributeNames)] = c.reservedAttrName
 		input.MessageAttributeNames = messageAttributeCopy
 	}
 
@@ -286,48 +286,122 @@ func (c *Client) ReceiveMessage(ctx context.Context, params *sqs.ReceiveMessageI
 		return nil, err
 	}
 
+	var wg sync.WaitGroup
+
 	for i, m := range sqsResp.Messages {
-		// TODO: goroutines here
+		wg.Add(1)
 
-		// check for reserved attribute name, skip processing if not present
-		if _, ok := m.MessageAttributes[c.attributeName]; !ok {
-			continue
-		}
+		go func(i int, m types.Message) {
+			defer wg.Done()
 
-		var ptr s3Pointer
-		err := json.Unmarshal([]byte(*m.Body), &ptr)
+			// check for reserved attribute name, skip processing if not present
+			if _, ok := m.MessageAttributes[c.reservedAttrName]; !ok {
+				return
+			}
 
-		if err != nil {
-			return nil, err
-		}
+			var ptr s3Pointer
+			err := json.Unmarshal([]byte(*m.Body), &ptr)
 
-		s3Resp, err := c.s3c.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: &ptr.S3BucketName,
-			Key:    &ptr.S3Key,
-		})
+			if err != nil {
+				// TODO: change to logger
+				fmt.Printf("error when unmarshalling s3 pointer: %s\n", err)
+				return
+			}
 
-		if err != nil {
-			return nil, err
-		}
+			s3Resp, err := c.s3c.GetObject(ctx, &s3.GetObjectInput{
+				Bucket: &ptr.S3BucketName,
+				Key:    &ptr.S3Key,
+			})
 
-		defer s3Resp.Body.Close()
+			if err != nil {
+				fmt.Printf("error when reading from s3 (%s/%s): %s\n", ptr.S3BucketName, ptr.S3Key, err)
+				return
+			}
 
-		bodyBytes, err := ioutil.ReadAll(s3Resp.Body)
+			defer s3Resp.Body.Close()
 
-		if err != nil {
-			return nil, err
-		}
+			bodyBytes, err := ioutil.ReadAll(s3Resp.Body)
 
-		sqsResp.Messages[i].Body = aws.String(string(bodyBytes))
-		sqsResp.Messages[i].ReceiptHandle = aws.String(newExtendedReceiptHandle(ptr.S3BucketName, ptr.S3Key, *m.ReceiptHandle))
-		delete(sqsResp.Messages[i].MessageAttributes, c.attributeName)
+			if err != nil {
+				fmt.Printf("error when reading buffer: %s\n", err)
+				return
+			}
+
+			sqsResp.Messages[i].Body = aws.String(string(bodyBytes))
+			sqsResp.Messages[i].ReceiptHandle = aws.String(newExtendedReceiptHandle(ptr.S3BucketName, ptr.S3Key, *m.ReceiptHandle))
+		}(i, m)
 	}
+
+	wg.Wait()
 
 	return sqsResp, nil
 }
 
-func (c *Client) ParseLambdaMessage(ctx context.Context, sqs events.SQSEvent) {
-	// TODO: figure this out
+// RetrieveLambdaEvent will fetch applicable S3 messages for a provided `events.SQSEvent`. The
+// provided SQSEvent will NOT be mutated, and a new SQSEvent will be returned that has a cloned
+// `Records` array with any S3 Pointers resolved to their actual files.
+//
+// For each record in the provided event, if the configured Reserved Attribute Name
+// ("ExtendedPayloadSize" by default) IS NOT present, the record is copied over without change to
+// the returned event. However, if the Reserved Attribute Name IS present, the body of the record
+// will be parsed to determine the S3 location of the full message body. This S3 location is read,
+// and the body of the record will be overwritten with the contents. The last update is made to the
+// record's ReceiptHandle, setting it to a unique pattern for the Extended SQS Client to be able to
+// delete the S3 file when the SQS message is deleted (see `DeleteMessage` for more details).
+func (c *Client) RetrieveLambdaEvent(ctx context.Context, evt *events.SQSEvent) (*events.SQSEvent, error) {
+	var wg sync.WaitGroup
+	copyRecords := make([]events.SQSMessage, len(evt.Records))
+	for i, r := range evt.Records {
+		wg.Add(1)
+
+		go func(i int, r events.SQSMessage) {
+			defer wg.Done()
+
+			copyRecords[i] = r
+
+			// check for reserved attribute name, skip processing if not present
+			if _, ok := r.MessageAttributes[c.reservedAttrName]; !ok {
+				return
+			}
+
+			var ptr s3Pointer
+			err := json.Unmarshal([]byte(r.Body), &ptr)
+
+			if err != nil {
+				// TODO: change to logger
+				fmt.Printf("error when unmarshalling s3 pointer: %s\n", err)
+				return
+			}
+
+			s3Resp, err := c.s3c.GetObject(ctx, &s3.GetObjectInput{
+				Bucket: &ptr.S3BucketName,
+				Key:    &ptr.S3Key,
+			})
+
+			if err != nil {
+				fmt.Printf("error when reading from s3 (%s/%s): %s\n", ptr.S3BucketName, ptr.S3Key, err)
+				return
+			}
+
+			defer s3Resp.Body.Close()
+
+			bodyBytes, err := ioutil.ReadAll(s3Resp.Body)
+
+			if err != nil {
+				fmt.Printf("error when reading buffer: %s\n", err)
+				return
+			}
+
+			copyRecords[i].Body = string(bodyBytes)
+			copyRecords[i].ReceiptHandle = newExtendedReceiptHandle(ptr.S3BucketName, ptr.S3Key, r.ReceiptHandle)
+		}(i, r)
+	}
+
+	wg.Wait()
+
+	dup := *evt
+	dup.Records = copyRecords
+	return &dup, nil
 }
 
 func newExtendedReceiptHandle(bucket, key, handle string) string {
