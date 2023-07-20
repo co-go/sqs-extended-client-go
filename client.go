@@ -28,8 +28,8 @@ const (
 	LegacyS3PointerClass        = "com.amazon.sqs.javamessaging.MessageS3Pointer"
 )
 
-// Client is a wrapper for the `sqs.Client`, providing extra functionality for retrieving, sending
-// and deleting messages.
+// Client is a wrapper for the [github.com/aws/aws-sdk-go-v2/service/sqs.Client], providing extra
+// functionality for retrieving, sending and deleting messages.
 type Client struct {
 	*sqs.Client
 	logging.Logger
@@ -43,24 +43,21 @@ type Client struct {
 
 type ClientOption func(*Client) error
 
-// New returns a newly created `Client` with defaults:
+// New returns a newly created [*Client] with defaults:
+//   - MessageSizeThreshold: 262144 (256 KiB)
+//   - S3PointerClass: "software.amazon.payloadoffloading.PayloadS3Pointer"
+//   - ReservedAttributeName: "ExtendedPayloadSize"
 //
-//	MessageSizeThreshold: 262144 (256 KiB)
-//	S3PointerClass: "software.amazon.payloadoffloading.PayloadS3Pointer"
-//	ReservedAttributeName: "ExtendedPayloadSize"
-//
-// Further options can be passed in to configure these or other options. See `ClientOption`
+// Further options can be passed in to configure these or other options. See [ClientOption]
 // functions for more details.
 func New(
 	sqsc *sqs.Client,
 	s3c *s3.Client,
-	bucketName string,
 	optFns ...ClientOption,
 ) (*Client, error) {
 	c := Client{
 		Client:               sqsc,
 		s3c:                  s3c,
-		bucketName:           bucketName,
 		messageSizeThreshold: 262144, // 256 KiB
 		pointerClass:         "software.amazon.payloadoffloading.PayloadS3Pointer",
 		reservedAttrName:     "ExtendedPayloadSize",
@@ -76,7 +73,16 @@ func New(
 	return &c, nil
 }
 
-// Set the MessageSizeThreshold to some other value (in bytes). By default this is `262144` (256
+// Set the destination bucket for large messages that are sent by this client. This is a
+// soft-requirement for using the SendMessage function.
+func WithS3BucketName(bucketName string) ClientOption {
+	return func(c *Client) error {
+		c.bucketName = bucketName
+		return nil
+	}
+}
+
+// Set the MessageSizeThreshold to some other value (in bytes). By default this is 262144 (256
 // KiB).
 func WithMessageSizeThreshold(size int) ClientOption {
 	return func(c *Client) error {
@@ -86,7 +92,7 @@ func WithMessageSizeThreshold(size int) ClientOption {
 }
 
 // Set the behavior of the client to always send messages to S3, regardless of the size of their
-// body or attributes. By default this is `false`.
+// body or attributes. By default this is false.
 func WithAlwaysS3(alwaysS3 bool) ClientOption {
 	return func(c *Client) error {
 		c.alwaysThroughS3 = alwaysS3
@@ -95,7 +101,7 @@ func WithAlwaysS3(alwaysS3 bool) ClientOption {
 }
 
 // Override the ReservedAttributeName with a custom value (i.e.
-// `sqsextendedclient.LegacyReservedAttributeName`)
+// [LegacyS3PointerClass])
 func WithReservedAttributeName(attributeName string) ClientOption {
 	return func(c *Client) error {
 		c.reservedAttrName = attributeName
@@ -103,7 +109,7 @@ func WithReservedAttributeName(attributeName string) ClientOption {
 	}
 }
 
-// Override PointerClass with custom value (i.e. `sqsextendedclient.LegacyS3PointerClass`)
+// Override PointerClass with custom value (i.e. [LegacyS3PointerClass])
 func WithPointerClass(pointerClass string) ClientOption {
 	return func(c *Client) error {
 		c.pointerClass = pointerClass
@@ -141,7 +147,6 @@ type s3Pointer struct {
 }
 
 func (p *s3Pointer) UnmarshalJSON(in []byte) error {
-	// TODO: given the trivial structure, might just use Regex to parse out fields
 	ptr := []interface{}{}
 
 	if err := json.Unmarshal(in, &ptr); err != nil {
@@ -179,26 +184,24 @@ func (p *s3Pointer) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf(`["%s",{"s3BucketName":"%s","s3Key":"%s"}]`, p.class, p.S3BucketName, p.S3Key)), nil
 }
 
-// Extended SQS Client wrapper around `sqs.SendMessage`. If the provided message exceeds the message
-// size threshold (defaults to 256KiB), then the message will be uploaded to S3. Assuming a
-// successful upload, the message will be altered by:
+// Extended SQS Client wrapper around [github.com/aws/aws-sdk-go-v2/service/sqs.Client.SendMessage].
+// If the provided message exceeds the message size threshold (defaults to 256KiB), then the message
+// will be uploaded to S3. Assuming a successful upload, the message will be altered by:
 //
-// 1. Adding a custom attribute under the configured reserved attribute name that contains
-// the size of the large payload.
-// 2. Body of the original message overridden with a S3 Pointer to the newly created S3 location
-// that holds the entirety of the message
+//  1. Adding a custom attribute under the configured reserved attribute name that contains the size
+//     of the large payload.
+//  2. Body of the original message overridden with a S3 Pointer to the newly created S3 location
+//     that holds the entirety of the message
 //
-// AWS doc for `sqs.SendMessage` for completeness:
+// AWS doc for [github.com/aws/aws-sdk-go-v2/service/sqs.Client.SendMessage] for completeness:
 //
 // Delivers a message to the specified queue. A message can include only XML, JSON, and unformatted
 // text. The following Unicode characters are allowed: #x9 | #xA | #xD | #x20 to #xD7FF | #xE000 to
 // #xFFFD | #x10000 to #x10FFFF Any characters not included in this list will be rejected. For more
-// information, see the W3C specification for characters (http://www.w3.org/TR/REC-xml/#charsets).
-func (c *Client) SendMessage(
-	ctx context.Context,
-	params *sqs.SendMessageInput,
-	optFns ...func(*sqs.Options),
-) (*sqs.SendMessageOutput, error) {
+// information, see the [W3C] specification for characters.
+//
+// [W3C]: http://www.w3.org/TR/REC-xml/#charsets
+func (c *Client) SendMessage(ctx context.Context, params *sqs.SendMessageInput, optFns ...func(*sqs.Options)) (*sqs.SendMessageOutput, error) {
 	// copy to avoid mutating params
 	input := *params
 
@@ -250,7 +253,7 @@ func (c *Client) SendMessage(
 
 // You can use SendMessageBatch to send up to 10 messages to the specified queue by assigning either
 // identical or different values to each message (or by not assigning values at all). This is a
-// batch version of SendMessage . For a FIFO queue, multiple messages within a single batch are
+// batch version of SendMessage. For a FIFO queue, multiple messages within a single batch are
 // enqueued in the order they are sent. The result of sending each message is reported individually
 // in the response. Because the batch request can result in a combination of successful and
 // unsuccessful actions, you should check for batch errors even when the call returns an HTTP status
@@ -259,7 +262,7 @@ func (c *Client) SendMessage(
 // message can include only XML, JSON, and unformatted text. The following Unicode characters are
 // allowed: #x9 | #xA | #xD | #x20 to #xD7FF | #xE000 to #xFFFD | #x10000 to #x10FFFF Any characters
 // not included in this list will be rejected. For more information, see the W3C specification for
-// characters (http://www.w3.org/TR/REC-xml/#charsets) . If you don't specify the DelaySeconds
+// characters (http://www.w3.org/TR/REC-xml/#charsets). If you don't specify the DelaySeconds
 // parameter for an entry, Amazon SQS uses the default value for the queue.
 func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBatchInput, optFns ...func(*sqs.Options)) (*sqs.SendMessageBatchOutput, error) {
 	input := *params
@@ -324,8 +327,9 @@ func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBa
 	return c.Client.SendMessageBatch(ctx, &input, optFns...)
 }
 
-// ReceiveMessage is a wrapper for the `sqs.ReceiveMessage` function, but it automatically retrieves
-// S3 files for each applicable message returned by the internal `sqs.ReceiveMessage` call.
+// ReceiveMessage is a wrapper for the
+// [github.com/aws/aws-sdk-go-v2/service/sqs.Client.ReceiveMessage] function, but it automatically
+// retrieves S3 files for each applicable message returned by the internal ReceiveMessage call.
 //
 // For each record in the provided event, if the configured Reserved Attribute Name
 // ("ExtendedPayloadSize" by default) IS NOT present, the record is copied over without change to
@@ -333,9 +337,9 @@ func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBa
 // will be parsed to determine the S3 location of the full message body. This S3 location is read,
 // and the body of the record will be overwritten with the contents. The last update is made to the
 // record's ReceiptHandle, setting it to a unique pattern for the Extended SQS Client to be able to
-// delete the S3 file when the SQS message is deleted (see `DeleteMessage` for more details).
+// delete the S3 file when the SQS message is deleted (see [*Client.DeleteMessage] for more details).
 //
-// AWS doc for `ReceiveMessage` for completeness:
+// AWS doc for [github.com/aws/aws-sdk-go-v2/service/sqs.Client.ReceiveMessage] for completeness:
 //
 // Retrieves one or more messages (up to 10), from the specified queue. Using the WaitTimeSeconds
 // parameter enables long-poll support. For more information, see Amazon SQS Long Polling
@@ -452,9 +456,9 @@ func (c *Client) ReceiveMessage(ctx context.Context, params *sqs.ReceiveMessageI
 // RetrieveLambdaEvent is very similar to ReceiveMessage, but it operates on an already-fetched
 // event (events.SQSEvent). This is meant to be used by those who need to interact with Extended SQS
 // Messages that originate from a SQS -> Lambda event source. This function will fetch applicable S3
-// messages for a provided `events.SQSEvent`. The provided SQSEvent will NOT be mutated, and a new
-// SQSEvent will be returned that has a cloned `Records` array with any S3 Pointers resolved to
-// their actual files.
+// messages for a provided [github.com/aws/aws-lambda-go/events.SQSEvent]. The provided SQSEvent
+// will NOT be mutated, and a new SQSEvent will be returned that has a cloned Records array with any
+// S3 Pointers resolved to their actual files.
 //
 // For each record in the provided event, if the configured Reserved Attribute Name
 // ("ExtendedPayloadSize" by default) IS NOT present, the record is copied over without change to
@@ -462,7 +466,8 @@ func (c *Client) ReceiveMessage(ctx context.Context, params *sqs.ReceiveMessageI
 // will be parsed to determine the S3 location of the full message body. This S3 location is read,
 // and the body of the record will be overwritten with the contents. The last update is made to the
 // record's ReceiptHandle, setting it to a unique pattern for the Extended SQS Client to be able to
-// delete the S3 file when the SQS message is deleted (see `DeleteMessage` for more details).
+// delete the S3 file when the SQS message is deleted (see [*Client.DeleteMessage] for more
+// details).
 func (c *Client) RetrieveLambdaEvent(ctx context.Context, evt *events.SQSEvent) (*events.SQSEvent, error) {
 	g := new(errgroup.Group)
 	copyRecords := make([]events.SQSMessage, len(evt.Records))
@@ -551,12 +556,12 @@ func parseExtendedReceiptHandle(extendedHandle string) (bucket, key, handle stri
 	return match[1], match[2], match[3]
 }
 
-// DeleteMessage is a SQS Extended Client wrapper for the `sqs.DeleteMessage` function. If the
-// provided `params.ReceiptHandle` matches with the format expected for the extended SQS client, it
-// will be parsed and the linked S3 file will be deleted before finally deleting the actual SQS
-// message.
+// DeleteMessage is a SQS Extended Client wrapper for the
+// [github.com/aws/aws-sdk-go-v2/service/sqs.Client.DeleteMessage] function. If the provided
+// params.ReceiptHandle matches with the format expected for the extended SQS client, it will be
+// parsed and the linked S3 file will be deleted before finally deleting the actual SQS message.
 //
-// AWS doc for `sqs.DeleteMessage` for completeness:
+// AWS doc for [github.com/aws/aws-sdk-go-v2/service/sqs.Client.DeleteMessage] for completeness:
 //
 // Deletes the specified message from the specified queue. To select the message to delete, use the
 // ReceiptHandle of the message (not the MessageId which you receive when you send the message).
@@ -593,12 +598,14 @@ func (c *Client) DeleteMessage(ctx context.Context, params *sqs.DeleteMessageInp
 	return c.Client.DeleteMessage(ctx, &input, optFns...)
 }
 
-// DeleteMessageBatch is a SQS Extended Client wrapper for the `sqs.DeleteMessageBatch` function.
-// For each entry provided, if its `params.ReceiptHandle` matches with the format expected for the
-// extended SQS client, it will be parsed and the linked S3 file will be deleted before finally
-// deleting the actual SQS message.
+// DeleteMessageBatch is a SQS Extended Client wrapper for the
+// [github.com/aws/aws-sdk-go-v2/service/sqs.Client.DeleteMessageBatch] function. For each entry
+// provided, if its ReceiptHandle matches with the format expected for the extended SQS client, it
+// will be parsed and the linked S3 file will be deleted before finally deleting the actual SQS
+// message.
 //
-// AWS doc for `sqs.DeleteMessage` for completeness:
+// AWS doc for [github.com/aws/aws-sdk-go-v2/service/sqs.Client.DeleteMessageBatch] for
+// completeness:
 //
 // Deletes up to ten messages from the specified queue. This is a batch version of DeleteMessage .
 // The result of the action on each message is reported individually in the response. Because the
@@ -633,7 +640,7 @@ func (c *Client) DeleteMessageBatch(ctx context.Context, params *sqs.DeleteMessa
 
 	g := new(errgroup.Group)
 
-	// for each delete request (grouped by bucket), send `s3.DeleteObjects` call in parallel
+	// for each delete request (grouped by bucket), send DeleteObjects call in parallel
 	for b, d := range deleteRequests {
 		b, d := b, d
 		g.Go(func() error {
