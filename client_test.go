@@ -54,3 +54,21 @@ func TestParseExtendedReceiptHandleFailure(t *testing.T) {
 	assert.Equal(t, "", key)
 	assert.Equal(t, "", handle)
 }
+
+func BenchmarkUnmarshalOriginal(b *testing.B) {
+	str := []byte(`["com.james.testing.Pointer",{"s3BucketName":"some-bucket","s3Key":"some-key"}]`)
+
+	var p s3Pointer
+	for n := 0; n < b.N; n++ {
+		_ = p.UnmarshalJSON(str)
+	}
+}
+
+func BenchmarkUnmarshalNew(b *testing.B) {
+	str := []byte(`["com.james.testing.Pointer",{"s3BucketName":"some-bucket","s3Key":"some-key"}]`)
+
+	var p s3Pointer
+	for n := 0; n < b.N; n++ {
+		_ = p.UnmarshalJSONNew(str)
+	}
+}
