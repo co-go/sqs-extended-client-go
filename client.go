@@ -27,6 +27,11 @@ const (
 	LegacyS3PointerClass        = "com.amazon.sqs.javamessaging.MessageS3Pointer"
 )
 
+var (
+	jsonUnmarshal = json.Unmarshal
+	jsonMarshal   = json.Marshal
+)
+
 type S3Client interface {
 	PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
 	GetObject(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error)
@@ -56,8 +61,8 @@ type ClientOption func(*Client) error
 // Further options can be passed in to configure these or other options. See [ClientOption]
 // functions for more details.
 func New(
-	sqsc *sqs.Client,
-	s3c *s3.Client,
+	sqsc SQSClient,
+	s3c S3Client,
 	optFns ...ClientOption,
 ) (*Client, error) {
 	c := Client{
@@ -138,7 +143,11 @@ func (c *Client) attributeSize(attributes map[string]types.MessageAttributeValue
 		go func(k string, attr types.MessageAttributeValue) {
 			sum.Add(int64(len([]byte(k))))
 			sum.Add(int64(len(attr.BinaryValue)))
-			sum.Add(int64(len(*attr.StringValue)))
+
+			if attr.StringValue != nil {
+				sum.Add(int64(len(*attr.StringValue)))
+			}
+
 			wg.Done()
 		}(k, v)
 	}
@@ -155,7 +164,7 @@ type s3Pointer struct {
 func (p *s3Pointer) UnmarshalJSON(in []byte) error {
 	ptr := []interface{}{}
 
-	if err := json.Unmarshal(in, &ptr); err != nil {
+	if err := jsonUnmarshal(in, &ptr); err != nil {
 		return err
 	}
 
@@ -211,7 +220,7 @@ func (c *Client) SendMessage(ctx context.Context, params *sqs.SendMessageInput, 
 		}
 
 		// create an s3 pointer that will be uploaded to SQS in place of the large payload
-		asBytes, err := json.Marshal(&s3Pointer{
+		asBytes, err := jsonMarshal(&s3Pointer{
 			S3BucketName: c.bucketName,
 			S3Key:        s3Key,
 			class:        c.pointerClass,
@@ -283,7 +292,7 @@ func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBa
 			})
 
 			// create an s3 pointer that will be uploaded to SQS in place of the large payload
-			asBytes, err := json.Marshal(&s3Pointer{
+			asBytes, err := jsonMarshal(&s3Pointer{
 				S3BucketName: c.bucketName,
 				S3Key:        s3Key,
 				class:        c.pointerClass,
@@ -405,7 +414,7 @@ func (c *Client) ReceiveMessage(ctx context.Context, params *sqs.ReceiveMessageI
 			var ptr s3Pointer
 
 			// attempt to unmarshal the message body into an S3 pointer
-			err := json.Unmarshal([]byte(*m.Body), &ptr)
+			err := jsonUnmarshal([]byte(*m.Body), &ptr)
 
 			if err != nil {
 				return fmt.Errorf("error when unmarshalling s3 pointer: %w", err)
@@ -472,7 +481,7 @@ func (c *Client) RetrieveLambdaEvent(ctx context.Context, evt *events.SQSEvent) 
 			}
 
 			var ptr s3Pointer
-			err := json.Unmarshal([]byte(r.Body), &ptr)
+			err := jsonUnmarshal([]byte(r.Body), &ptr)
 
 			if err != nil {
 				return fmt.Errorf("error when unmarshalling s3 pointer: %w", err)

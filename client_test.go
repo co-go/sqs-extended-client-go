@@ -1,13 +1,174 @@
 package sqsextendedclient
 
 import (
-	"encoding/json"
+	"context"
+	"errors"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 )
 
 // assert not mutating inputs
+
+type mockSQSClient struct {
+	*mock.Mock
+	SQSClient
+}
+
+func (m *mockSQSClient) SendMessage(ctx context.Context, params *sqs.SendMessageInput, optFns ...func(*sqs.Options)) (*sqs.SendMessageOutput, error) {
+	args := m.Called(ctx, params, optFns)
+	return args.Get(0).(*sqs.SendMessageOutput), args.Error(1)
+}
+
+func (m *mockSQSClient) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBatchInput, optFns ...func(*sqs.Options)) (*sqs.SendMessageBatchOutput, error) {
+	args := m.Called(ctx, params, optFns)
+	return args.Get(0).(*sqs.SendMessageBatchOutput), args.Error(1)
+}
+
+func (m *mockSQSClient) ReceiveMessage(ctx context.Context, params *sqs.ReceiveMessageInput, optFns ...func(*sqs.Options)) (*sqs.ReceiveMessageOutput, error) {
+	args := m.Called(ctx, params, optFns)
+	return args.Get(0).(*sqs.ReceiveMessageOutput), args.Error(1)
+}
+
+func (m *mockSQSClient) DeleteMessage(ctx context.Context, params *sqs.DeleteMessageInput, optFns ...func(*sqs.Options)) (*sqs.DeleteMessageOutput, error) {
+	args := m.Called(ctx, params, optFns)
+	return args.Get(0).(*sqs.DeleteMessageOutput), args.Error(1)
+}
+
+func (m *mockSQSClient) DeleteMessageBatch(ctx context.Context, params *sqs.DeleteMessageBatchInput, optFns ...func(*sqs.Options)) (*sqs.DeleteMessageBatchOutput, error) {
+	args := m.Called(ctx, params, optFns)
+	return args.Get(0).(*sqs.DeleteMessageBatchOutput), args.Error(1)
+}
+
+type mockS3Client struct {
+	*mock.Mock
+}
+
+func (m *mockS3Client) PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+	args := m.Called(ctx, params, optFns)
+	return args.Get(0).(*s3.PutObjectOutput), args.Error(1)
+}
+
+func (m *mockS3Client) GetObject(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+	args := m.Called(ctx, params, optFns)
+	return args.Get(0).(*s3.GetObjectOutput), args.Error(1)
+}
+
+func (m *mockS3Client) DeleteObject(ctx context.Context, params *s3.DeleteObjectInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectOutput, error) {
+	args := m.Called(ctx, params, optFns)
+	return args.Get(0).(*s3.DeleteObjectOutput), args.Error(1)
+}
+
+func (m *mockS3Client) DeleteObjects(ctx context.Context, params *s3.DeleteObjectsInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectsOutput, error) {
+	args := m.Called(ctx, params, optFns)
+	return args.Get(0).(*s3.DeleteObjectsOutput), args.Error(1)
+}
+
+func TestNewClient(t *testing.T) {
+	c, err := New(nil, nil)
+	assert.Nil(t, err)
+
+	// ensure defaults are set correctly
+	assert.Equal(t, int64(262144), c.messageSizeThreshold)
+	assert.Equal(t, "software.amazon.payloadoffloading.PayloadS3Pointer", c.pointerClass)
+	assert.Equal(t, "ExtendedPayloadSize", c.reservedAttrName)
+}
+
+func TestNewClientOptions(t *testing.T) {
+	c, err := New(
+		nil,
+		nil,
+		WithAlwaysS3(true),
+		WithMessageSizeThreshold(123),
+		WithPointerClass("pointer.class"),
+		WithReservedAttributeName("Reserved"),
+		WithS3BucketName("BUCKET!"),
+	)
+
+	assert.Nil(t, err)
+
+	// ensure options are set correctly
+	assert.Equal(t, true, c.alwaysThroughS3)
+	assert.Equal(t, int64(123), c.messageSizeThreshold)
+	assert.Equal(t, "pointer.class", c.pointerClass)
+	assert.Equal(t, "Reserved", c.reservedAttrName)
+	assert.Equal(t, "BUCKET!", c.bucketName)
+}
+
+func TestNewClientOptionsFailure(t *testing.T) {
+	c, err := New(
+		nil,
+		nil,
+		func(c *Client) error { return errors.New("boom") },
+	)
+
+	assert.ErrorContains(t, err, "boom")
+	assert.Nil(t, c)
+}
+
+func TestAttributeSize(t *testing.T) {
+	c, err := New(nil, nil)
+	assert.Nil(t, err)
+
+	assert.Equal(t, int64(26), c.attributeSize(map[string]types.MessageAttributeValue{
+		"testing_strings": {
+			StringValue: aws.String("some string"),
+		},
+	}))
+
+	assert.Equal(t, int64(20), c.attributeSize(map[string]types.MessageAttributeValue{
+		"testing_binary": {
+			BinaryValue: []byte{1, 2, 3, 4, 5, 6},
+		},
+	}))
+
+	assert.Equal(t, int64(47), c.attributeSize(map[string]types.MessageAttributeValue{
+		"binary_attr": {
+			BinaryValue: []byte{1, 2, 3, 4, 5, 6},
+		},
+		"string_attr1": {
+			StringValue: aws.String("str"),
+		},
+		"string_attr2": {
+			StringValue: aws.String("str"),
+		},
+	}))
+}
+
+func TestMessageExceedThreshold(t *testing.T) {
+	c, err := New(nil, nil, WithMessageSizeThreshold(10))
+	assert.Nil(t, err)
+
+	assert.False(t, c.messageExceedsThreshold(
+		aws.String("nnnnnnnnnn"),
+		map[string]types.MessageAttributeValue{},
+	))
+
+	assert.True(t, c.messageExceedsThreshold(
+		aws.String("nnnnnnnnnnn"),
+		map[string]types.MessageAttributeValue{},
+	))
+
+	assert.False(t, c.messageExceedsThreshold(
+		aws.String("nnnnn"),
+		map[string]types.MessageAttributeValue{
+			"str": {StringValue: aws.String("hi")},
+		},
+	))
+
+	assert.True(t, c.messageExceedsThreshold(
+		aws.String("nnnnnn"),
+		map[string]types.MessageAttributeValue{
+			"str": {StringValue: aws.String("hi")},
+		},
+	))
+}
+
 func TestS3PointerMarshal(t *testing.T) {
 	p := s3Pointer{
 		S3BucketName: "some-bucket",
@@ -15,7 +176,7 @@ func TestS3PointerMarshal(t *testing.T) {
 		class:        "com.james.testing.Pointer",
 	}
 
-	asBytes, err := json.Marshal(&p)
+	asBytes, err := p.MarshalJSON()
 	assert.Nil(t, err)
 	assert.Equal(t, `["com.james.testing.Pointer",{"s3BucketName":"some-bucket","s3Key":"some-key"}]`, string(asBytes))
 }
@@ -24,7 +185,7 @@ func TestS3PointerUnmarshal(t *testing.T) {
 	str := []byte(`["com.james.testing.Pointer",{"s3BucketName":"some-bucket","s3Key":"some-key"}]`)
 
 	var p s3Pointer
-	err := json.Unmarshal(str, &p)
+	err := p.UnmarshalJSON(str)
 	assert.Nil(t, err)
 	assert.Equal(t, s3Pointer{
 		S3BucketName: "some-bucket",
@@ -33,11 +194,17 @@ func TestS3PointerUnmarshal(t *testing.T) {
 	}, p)
 }
 
+func TestS3PointerUnmarshalError(t *testing.T) {
+	var p s3Pointer
+	err := p.UnmarshalJSON([]byte(""))
+	assert.NotNil(t, err)
+}
+
 func TestS3PointerUnmarshalInvalidLength(t *testing.T) {
 	str := []byte(`["com.james.testing.Pointer",{"s3BucketName":"some-bucket","s3Key":"some-key"}, "bonus!"]`)
 
 	var p s3Pointer
-	err := json.Unmarshal(str, &p)
+	err := p.UnmarshalJSON(str)
 	assert.ErrorContains(t, err, "invalid pointer format, expected length 2, but received [3]")
 }
 
