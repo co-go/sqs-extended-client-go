@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/stretchr/testify/assert"
@@ -756,6 +757,94 @@ func TestDeleteMessageS3Error(t *testing.T) {
 
 	_, err = c.DeleteMessage(context.Background(), &sqs.DeleteMessageInput{
 		ReceiptHandle: aws.String("-..s3BucketName..-some-bucket-..s3BucketName..--..s3Key..-some-key-..s3Key..-abcdefg"),
+	})
+
+	assert.Error(t, err)
+}
+
+func TestDeleteMessageBatch(t *testing.T) {
+	ms3c := &mockS3Client{&mock.Mock{}}
+	ms3c.On(
+		"DeleteObjects",
+		mock.Anything,
+		mock.MatchedBy(func(params *s3.DeleteObjectsInput) bool {
+			if *params.Bucket == "some-bucket" {
+				assert.Equal(
+					t,
+					[]s3types.ObjectIdentifier{{Key: aws.String("some-key")}, {Key: aws.String("another-key")}},
+					params.Delete.Objects,
+				)
+
+				return true
+			} else if *params.Bucket == "alternate-bucket" {
+				assert.Equal(
+					t,
+					[]s3types.ObjectIdentifier{{Key: aws.String("yet-another-key")}},
+					params.Delete.Objects,
+				)
+
+				return true
+			}
+
+			return false
+		}),
+		mock.Anything).
+		Return(&s3.DeleteObjectsOutput{}, nil)
+
+	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
+	msqsc.On(
+		"DeleteMessageBatch",
+		mock.Anything,
+		mock.MatchedBy(func(params *sqs.DeleteMessageBatchInput) bool {
+			assert.Len(t, params.Entries, 3)
+			assert.Equal(t, "object_1", *params.Entries[0].Id)
+			assert.Equal(t, "object_2", *params.Entries[1].Id)
+			assert.Equal(t, "object_3", *params.Entries[2].Id)
+			assert.Equal(t, "abcdefg", *params.Entries[0].ReceiptHandle)
+			assert.Equal(t, "hijklmn", *params.Entries[1].ReceiptHandle)
+			assert.Equal(t, "123", *params.Entries[2].ReceiptHandle)
+			return true
+		}),
+		mock.Anything).
+		Return(&sqs.DeleteMessageBatchOutput{}, nil)
+
+	c, err := New(msqsc, ms3c)
+	assert.Nil(t, err)
+
+	_, err = c.DeleteMessageBatch(context.Background(), &sqs.DeleteMessageBatchInput{
+		Entries: []types.DeleteMessageBatchRequestEntry{
+			{
+				Id:            aws.String("object_1"),
+				ReceiptHandle: aws.String("-..s3BucketName..-some-bucket-..s3BucketName..--..s3Key..-some-key-..s3Key..-abcdefg"),
+			},
+			{
+				Id:            aws.String("object_2"),
+				ReceiptHandle: aws.String("-..s3BucketName..-some-bucket-..s3BucketName..--..s3Key..-another-key-..s3Key..-hijklmn"),
+			},
+			{
+				Id:            aws.String("object_3"),
+				ReceiptHandle: aws.String("-..s3BucketName..-alternate-bucket-..s3BucketName..--..s3Key..-yet-another-key-..s3Key..-123"),
+			},
+		},
+	})
+
+	assert.Nil(t, err)
+}
+
+func TestDeleteMessageBatchS3Error(t *testing.T) {
+	ms3c := &mockS3Client{&mock.Mock{}}
+	ms3c.On("DeleteObjects", mock.Anything, mock.Anything, mock.Anything).Return(&s3.DeleteObjectsOutput{}, errors.New("boom"))
+
+	c, err := New(nil, ms3c)
+	assert.Nil(t, err)
+
+	_, err = c.DeleteMessageBatch(context.Background(), &sqs.DeleteMessageBatchInput{
+		Entries: []types.DeleteMessageBatchRequestEntry{
+			{
+				Id:            aws.String("object_1"),
+				ReceiptHandle: aws.String("-..s3BucketName..-some-bucket-..s3BucketName..--..s3Key..-some-key-..s3Key..-abcdefg"),
+			},
+		},
 	})
 
 	assert.Error(t, err)

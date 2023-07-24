@@ -655,6 +655,7 @@ func (c *Client) DeleteMessageBatch(ctx context.Context, params *sqs.DeleteMessa
 
 			// append the current key to the list of objects to be deleted
 			req.Objects = append(req.Objects, s3types.ObjectIdentifier{Key: &key})
+			deleteRequests[bucket] = req
 
 			// override the current entry to use new handle
 			copyEntries[i].ReceiptHandle = &handle
@@ -680,5 +681,7 @@ func (c *Client) DeleteMessageBatch(ctx context.Context, params *sqs.DeleteMessa
 		return nil, err
 	}
 
-	return c.SQSClient.DeleteMessageBatch(ctx, params, optFns...)
+	input.Entries = copyEntries
+
+	return c.SQSClient.DeleteMessageBatch(ctx, &input, optFns...)
 }
