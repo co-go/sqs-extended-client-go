@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -71,6 +72,10 @@ func (m *mockS3Client) DeleteObjects(ctx context.Context, params *s3.DeleteObjec
 	args := m.Called(ctx, params, optFns)
 	return args.Get(0).(*s3.DeleteObjectsOutput), args.Error(1)
 }
+
+type errReader struct{}
+
+func (errReader) Read(b []byte) (int, error) { return 0, errors.New("boom") }
 
 func getDefaultS3Pointer(bucket, key string) string {
 	return fmt.Sprintf(`["software.amazon.payloadoffloading.PayloadS3Pointer",{"s3BucketName":"%s","s3Key":"%s"}]`, bucket, key)
@@ -397,6 +402,186 @@ func TestSendMessageBatchMarshalFailure(t *testing.T) {
 	})
 
 	assert.ErrorContains(t, err, "unable to marshal S3 pointer")
+}
+
+func TestReceiveMessage(t *testing.T) {
+	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
+	msqsc.On(
+		"ReceiveMessage",
+		mock.Anything,
+		mock.MatchedBy(func(params *sqs.ReceiveMessageInput) bool {
+			assert.Equal(t, []string{"ExtendedPayloadSize"}, params.MessageAttributeNames)
+			return true
+		}),
+		mock.Anything).
+		Return(&sqs.ReceiveMessageOutput{Messages: []types.Message{
+			{
+				Body:              aws.String(getDefaultS3Pointer("test-bucket", "test-item")),
+				MessageAttributes: map[string]types.MessageAttributeValue{"ExtendedPayloadSize": {}},
+				ReceiptHandle:     aws.String("mock-handle-123"),
+			},
+			{
+				Body:          aws.String("non s3 pointer body"),
+				ReceiptHandle: aws.String("mock-handle-456"),
+			},
+		}}, nil)
+
+	ms3c := &mockS3Client{&mock.Mock{}}
+	ms3c.On("GetObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.GetObjectOutput{
+		Body: io.NopCloser(strings.NewReader("hiya")),
+	}, nil)
+
+	c, err := New(msqsc, ms3c)
+	assert.Nil(t, err)
+
+	resp, err := c.ReceiveMessage(context.Background(), &sqs.ReceiveMessageInput{})
+	assert.Nil(t, err)
+
+	assert.Equal(t, "hiya", *resp.Messages[0].Body)
+	assert.Equal(t, "-..s3BucketName..-test-bucket-..s3BucketName..--..s3Key..-test-item-..s3Key..-mock-handle-123", *resp.Messages[0].ReceiptHandle)
+	assert.Equal(t, "non s3 pointer body", *resp.Messages[1].Body)
+	assert.Equal(t, "mock-handle-456", *resp.Messages[1].ReceiptHandle)
+}
+
+func TestReceiveMessageAllAttributes(t *testing.T) {
+	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
+	msqsc.On(
+		"ReceiveMessage",
+		mock.Anything,
+		mock.MatchedBy(func(params *sqs.ReceiveMessageInput) bool {
+			assert.Equal(t, []string{"All"}, params.MessageAttributeNames)
+			return true
+		}),
+		mock.Anything).
+		Return(&sqs.ReceiveMessageOutput{}, nil)
+
+	c, err := New(msqsc, nil)
+	assert.Nil(t, err)
+
+	_, err = c.ReceiveMessage(context.Background(), &sqs.ReceiveMessageInput{
+		MessageAttributeNames: []string{"All"},
+	})
+	assert.Nil(t, err)
+}
+
+func TestReceiveMessageAllAttributesAlternateSyntax(t *testing.T) {
+	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
+	msqsc.On(
+		"ReceiveMessage",
+		mock.Anything,
+		mock.MatchedBy(func(params *sqs.ReceiveMessageInput) bool {
+			assert.Equal(t, []string{".*"}, params.MessageAttributeNames)
+			return true
+		}),
+		mock.Anything).
+		Return(&sqs.ReceiveMessageOutput{}, nil)
+
+	c, err := New(msqsc, nil)
+	assert.Nil(t, err)
+
+	_, err = c.ReceiveMessage(context.Background(), &sqs.ReceiveMessageInput{
+		MessageAttributeNames: []string{".*"},
+	})
+	assert.Nil(t, err)
+}
+
+func TestReceiveMessageNoDuplicateAttribute(t *testing.T) {
+	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
+	msqsc.On(
+		"ReceiveMessage",
+		mock.Anything,
+		mock.MatchedBy(func(params *sqs.ReceiveMessageInput) bool {
+			assert.Equal(t, []string{"ExtendedPayloadSize", "something_else"}, params.MessageAttributeNames)
+			return true
+		}),
+		mock.Anything).
+		Return(&sqs.ReceiveMessageOutput{}, nil)
+
+	c, err := New(msqsc, nil)
+	assert.Nil(t, err)
+
+	_, err = c.ReceiveMessage(context.Background(), &sqs.ReceiveMessageInput{
+		MessageAttributeNames: []string{"ExtendedPayloadSize", "something_else"},
+	})
+	assert.Nil(t, err)
+}
+
+func TestReceiveMessageError(t *testing.T) {
+	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
+	msqsc.On("ReceiveMessage", mock.Anything, mock.Anything, mock.Anything).Return(&sqs.ReceiveMessageOutput{}, errors.New("boom"))
+
+	c, err := New(msqsc, nil)
+	assert.Nil(t, err)
+
+	_, err = c.ReceiveMessage(context.Background(), &sqs.ReceiveMessageInput{})
+	assert.NotNil(t, err)
+}
+
+func TestReceiveMessageJSONError(t *testing.T) {
+	jsonUnmarshal = func(data []byte, v any) error { return errors.New("boom") }
+	defer func() { jsonUnmarshal = json.Unmarshal }()
+
+	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
+	msqsc.
+		On("ReceiveMessage", mock.Anything, mock.Anything, mock.Anything).
+		Return(&sqs.ReceiveMessageOutput{Messages: []types.Message{
+			{
+				Body:              aws.String(getDefaultS3Pointer("test-bucket", "test-item")),
+				MessageAttributes: map[string]types.MessageAttributeValue{"ExtendedPayloadSize": {}},
+			},
+		}}, nil)
+
+	c, err := New(msqsc, nil)
+	assert.Nil(t, err)
+
+	_, err = c.ReceiveMessage(context.Background(), &sqs.ReceiveMessageInput{})
+	assert.ErrorContains(t, err, "error when unmarshalling s3 pointer")
+}
+
+func TestReceiveMessageS3Error(t *testing.T) {
+	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
+	msqsc.
+		On("ReceiveMessage", mock.Anything, mock.Anything, mock.Anything).
+		Return(&sqs.ReceiveMessageOutput{Messages: []types.Message{
+			{
+				Body:              aws.String(getDefaultS3Pointer("test-bucket", "test-item")),
+				MessageAttributes: map[string]types.MessageAttributeValue{"ExtendedPayloadSize": {}},
+				ReceiptHandle:     aws.String("mock-handle-123"),
+			},
+		}}, nil)
+
+	ms3c := &mockS3Client{&mock.Mock{}}
+	ms3c.On("GetObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.GetObjectOutput{}, errors.New("boom"))
+
+	c, err := New(msqsc, ms3c)
+	assert.Nil(t, err)
+
+	_, err = c.ReceiveMessage(context.Background(), &sqs.ReceiveMessageInput{})
+	assert.ErrorContains(t, err, "error when reading from s3 (test-bucket/test-item)")
+}
+
+func TestReceiveMessageReadError(t *testing.T) {
+	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
+	msqsc.
+		On("ReceiveMessage", mock.Anything, mock.Anything, mock.Anything).
+		Return(&sqs.ReceiveMessageOutput{Messages: []types.Message{
+			{
+				Body:              aws.String(getDefaultS3Pointer("test-bucket", "test-item")),
+				MessageAttributes: map[string]types.MessageAttributeValue{"ExtendedPayloadSize": {}},
+				ReceiptHandle:     aws.String("mock-handle-123"),
+			},
+		}}, nil)
+
+	ms3c := &mockS3Client{&mock.Mock{}}
+	ms3c.
+		On("GetObject", mock.Anything, mock.Anything, mock.Anything).
+		Return(&s3.GetObjectOutput{Body: io.NopCloser(errReader{})}, nil)
+
+	c, err := New(msqsc, ms3c)
+	assert.Nil(t, err)
+
+	_, err = c.ReceiveMessage(context.Background(), &sqs.ReceiveMessageInput{})
+	assert.ErrorContains(t, err, "error when reading buffer")
 }
 
 func TestParseExtendedReceiptHandle(t *testing.T) {

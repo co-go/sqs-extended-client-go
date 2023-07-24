@@ -424,7 +424,7 @@ func (c *Client) ReceiveMessage(ctx context.Context, params *sqs.ReceiveMessageI
 	g := new(errgroup.Group)
 
 	for i, m := range sqsResp.Messages {
-		i, m := i, m // https://golang.org/doc/faq#closures_and_goroutines
+		i, m := i, m
 
 		g.Go(func() error {
 			// check for reserved attribute name, skip processing if not present
@@ -493,7 +493,7 @@ func (c *Client) RetrieveLambdaEvent(ctx context.Context, evt *events.SQSEvent) 
 	copyRecords := make([]events.SQSMessage, len(evt.Records))
 
 	for i, r := range evt.Records {
-		i, r := i, r // https://golang.org/doc/faq#closures_and_goroutines
+		i, r := i, r
 
 		g.Go(func() error {
 			// check for reserved attribute name, skip processing if not present
