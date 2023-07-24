@@ -690,3 +690,73 @@ func TestParseExtendedReceiptHandleFailure(t *testing.T) {
 	assert.Equal(t, "", key)
 	assert.Equal(t, "", handle)
 }
+
+func TestDeleteMessage(t *testing.T) {
+	ms3c := &mockS3Client{&mock.Mock{}}
+	ms3c.On(
+		"DeleteObject",
+		mock.Anything,
+		mock.MatchedBy(func(params *s3.DeleteObjectInput) bool {
+			assert.Equal(t, "some-bucket", *params.Bucket)
+			assert.Equal(t, "some-key", *params.Key)
+			return true
+		}),
+		mock.Anything).
+		Return(&s3.DeleteObjectOutput{}, nil)
+
+	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
+	msqsc.On(
+		"DeleteMessage",
+		mock.Anything,
+		mock.MatchedBy(func(params *sqs.DeleteMessageInput) bool {
+			assert.Equal(t, "abcdefg", *params.ReceiptHandle)
+			return true
+		}),
+		mock.Anything).
+		Return(&sqs.DeleteMessageOutput{}, nil)
+
+	c, err := New(msqsc, ms3c)
+	assert.Nil(t, err)
+
+	_, err = c.DeleteMessage(context.Background(), &sqs.DeleteMessageInput{
+		ReceiptHandle: aws.String("-..s3BucketName..-some-bucket-..s3BucketName..--..s3Key..-some-key-..s3Key..-abcdefg"),
+	})
+
+	assert.Nil(t, err)
+}
+
+func TestDeleteMessageNonExtended(t *testing.T) {
+	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
+	msqsc.On(
+		"DeleteMessage",
+		mock.Anything,
+		mock.MatchedBy(func(params *sqs.DeleteMessageInput) bool {
+			assert.Equal(t, "non extended receipt handle", *params.ReceiptHandle)
+			return true
+		}),
+		mock.Anything).
+		Return(&sqs.DeleteMessageOutput{}, nil)
+
+	c, err := New(msqsc, nil)
+	assert.Nil(t, err)
+
+	_, err = c.DeleteMessage(context.Background(), &sqs.DeleteMessageInput{
+		ReceiptHandle: aws.String("non extended receipt handle"),
+	})
+
+	assert.Nil(t, err)
+}
+
+func TestDeleteMessageS3Error(t *testing.T) {
+	ms3c := &mockS3Client{&mock.Mock{}}
+	ms3c.On("DeleteObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.DeleteObjectOutput{}, errors.New("boom"))
+
+	c, err := New(nil, ms3c)
+	assert.Nil(t, err)
+
+	_, err = c.DeleteMessage(context.Background(), &sqs.DeleteMessageInput{
+		ReceiptHandle: aws.String("-..s3BucketName..-some-bucket-..s3BucketName..--..s3Key..-some-key-..s3Key..-abcdefg"),
+	})
+
+	assert.Error(t, err)
+}
