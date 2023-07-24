@@ -30,7 +30,7 @@ const (
 // Client is a wrapper for the [github.com/aws/aws-sdk-go-v2/service/sqs.Client], providing extra
 // functionality for retrieving, sending and deleting messages.
 type Client struct {
-	*sqs.Client
+	SQSClient
 	s3c                  *s3.Client
 	bucketName           string
 	messageSizeThreshold int64
@@ -54,7 +54,7 @@ func New(
 	optFns ...ClientOption,
 ) (*Client, error) {
 	c := Client{
-		Client:               sqsc,
+		SQSClient:            sqsc,
 		s3c:                  s3c,
 		messageSizeThreshold: 262144, // 256 KiB
 		pointerClass:         "software.amazon.payloadoffloading.PayloadS3Pointer",
@@ -231,7 +231,7 @@ func (c *Client) SendMessage(ctx context.Context, params *sqs.SendMessageInput, 
 		input.MessageBody = aws.String(string(asBytes))
 	}
 
-	return c.Client.SendMessage(ctx, &input, optFns...)
+	return c.SQSClient.SendMessage(ctx, &input, optFns...)
 }
 
 // You can use SendMessageBatch to send up to 10 messages to the specified queue by assigning either
@@ -307,7 +307,7 @@ func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBa
 	// override entries with our copied ones
 	input.Entries = copyEntries
 
-	return c.Client.SendMessageBatch(ctx, &input, optFns...)
+	return c.SQSClient.SendMessageBatch(ctx, &input, optFns...)
 }
 
 // ReceiveMessage is a wrapper for the
@@ -378,7 +378,7 @@ func (c *Client) ReceiveMessage(ctx context.Context, params *sqs.ReceiveMessageI
 	}
 
 	// call underlying SQS ReceiveMessage
-	sqsResp, err := c.Client.ReceiveMessage(ctx, &input, optFns...)
+	sqsResp, err := c.SQSClient.ReceiveMessage(ctx, &input, optFns...)
 
 	if err != nil {
 		return nil, err
@@ -578,7 +578,7 @@ func (c *Client) DeleteMessage(ctx context.Context, params *sqs.DeleteMessageInp
 		input.ReceiptHandle = &handle
 	}
 
-	return c.Client.DeleteMessage(ctx, &input, optFns...)
+	return c.SQSClient.DeleteMessage(ctx, &input, optFns...)
 }
 
 // DeleteMessageBatch is a SQS Extended Client wrapper for the
@@ -640,5 +640,5 @@ func (c *Client) DeleteMessageBatch(ctx context.Context, params *sqs.DeleteMessa
 		return nil, err
 	}
 
-	return c.Client.DeleteMessageBatch(ctx, params, optFns...)
+	return c.SQSClient.DeleteMessageBatch(ctx, params, optFns...)
 }

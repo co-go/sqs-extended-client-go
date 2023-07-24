@@ -13,6 +13,7 @@
 
 # Dependency directories
 vendor
+tmp_aws
 
 # Go workspace file
 go.work
