@@ -495,6 +495,9 @@ func (c *Client) RetrieveLambdaEvent(ctx context.Context, evt *events.SQSEvent) 
 	for i, r := range evt.Records {
 		i, r := i, r
 
+		// always copy the entry, regardless of reserved attribute name
+		copyRecords[i] = r
+
 		g.Go(func() error {
 			// check for reserved attribute name, skip processing if not present
 			if _, ok := r.MessageAttributes[c.reservedAttrName]; !ok {

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
@@ -581,6 +582,98 @@ func TestReceiveMessageReadError(t *testing.T) {
 	assert.Nil(t, err)
 
 	_, err = c.ReceiveMessage(context.Background(), &sqs.ReceiveMessageInput{})
+	assert.ErrorContains(t, err, "error when reading buffer")
+}
+
+func TestRetrieveLambdaEvent(t *testing.T) {
+	ms3c := &mockS3Client{&mock.Mock{}}
+	ms3c.
+		On(
+			"GetObject",
+			mock.Anything,
+			mock.MatchedBy(func(params *s3.GetObjectInput) bool {
+				assert.Equal(t, "test-bucket", *params.Bucket)
+				return true
+			}),
+			mock.Anything).
+		Return(&s3.GetObjectOutput{Body: io.NopCloser(strings.NewReader("hiya"))}, nil)
+
+	c, err := New(nil, ms3c)
+	assert.Nil(t, err)
+
+	resp, err := c.RetrieveLambdaEvent(context.Background(), &events.SQSEvent{
+		Records: []events.SQSMessage{
+			{
+				Body:              getDefaultS3Pointer("test-bucket", "test-event"),
+				MessageAttributes: map[string]events.SQSMessageAttribute{"ExtendedPayloadSize": {}},
+				ReceiptHandle:     "something-or-other",
+			},
+			{
+				Body:          "normal non-pointer body",
+				ReceiptHandle: "something-else",
+			},
+		},
+	})
+
+	assert.Nil(t, err)
+	assert.Equal(t, "hiya", resp.Records[0].Body)
+	assert.Equal(t, "-..s3BucketName..-test-bucket-..s3BucketName..--..s3Key..-test-event-..s3Key..-something-or-other", resp.Records[0].ReceiptHandle)
+	assert.Equal(t, "normal non-pointer body", resp.Records[1].Body)
+	assert.Equal(t, "something-else", resp.Records[1].ReceiptHandle)
+}
+
+func TestRetrieveLambdaEventJSONError(t *testing.T) {
+	jsonUnmarshal = func(data []byte, v any) error { return errors.New("boom") }
+	defer func() { jsonUnmarshal = json.Unmarshal }()
+
+	c, err := New(nil, nil)
+	assert.Nil(t, err)
+
+	_, err = c.RetrieveLambdaEvent(context.Background(), &events.SQSEvent{
+		Records: []events.SQSMessage{{
+			Body:              getDefaultS3Pointer("test-bucket", "test-event"),
+			MessageAttributes: map[string]events.SQSMessageAttribute{"ExtendedPayloadSize": {}},
+		}},
+	})
+
+	assert.ErrorContains(t, err, "error when unmarshalling s3 pointer")
+}
+
+func TestRetrieveLambdaEventS3Error(t *testing.T) {
+	ms3c := &mockS3Client{&mock.Mock{}}
+	ms3c.
+		On("GetObject", mock.Anything, mock.Anything, mock.Anything).
+		Return(&s3.GetObjectOutput{}, errors.New("boom"))
+
+	c, err := New(nil, ms3c)
+	assert.Nil(t, err)
+
+	_, err = c.RetrieveLambdaEvent(context.Background(), &events.SQSEvent{
+		Records: []events.SQSMessage{{
+			Body:              getDefaultS3Pointer("test-bucket", "test-event"),
+			MessageAttributes: map[string]events.SQSMessageAttribute{"ExtendedPayloadSize": {}},
+		}},
+	})
+
+	assert.ErrorContains(t, err, "error when reading from s3 (test-bucket/test-event)")
+}
+
+func TestRetrieveLambdaEventBufferError(t *testing.T) {
+	ms3c := &mockS3Client{&mock.Mock{}}
+	ms3c.
+		On("GetObject", mock.Anything, mock.Anything, mock.Anything).
+		Return(&s3.GetObjectOutput{Body: io.NopCloser(errReader{})}, nil)
+
+	c, err := New(nil, ms3c)
+	assert.Nil(t, err)
+
+	_, err = c.RetrieveLambdaEvent(context.Background(), &events.SQSEvent{
+		Records: []events.SQSMessage{{
+			Body:              getDefaultS3Pointer("test-bucket", "test-event"),
+			MessageAttributes: map[string]events.SQSMessageAttribute{"ExtendedPayloadSize": {}},
+		}},
+	})
+
 	assert.ErrorContains(t, err, "error when reading buffer")
 }
 
