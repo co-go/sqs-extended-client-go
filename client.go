@@ -250,6 +250,21 @@ func (c *Client) SendMessage(ctx context.Context, params *sqs.SendMessageInput, 
 	return c.SQSClient.SendMessage(ctx, &input, optFns...)
 }
 
+// Extended SQS Client wrapper around
+// [github.com/aws/aws-sdk-go-v2/service/sqs.Client.SendMessageBatch]. For each provided message in
+// the batch, if the message exceeds the message size threshold (defaults to 256KiB), then the
+// message will be uploaded to S3. Assuming a successful upload, the message will be altered by:
+//
+//  1. Adding a custom attribute under the configured reserved attribute name that contains the size
+//     of the large payload.
+//  2. Body of the original message overridden with a S3 Pointer to the newly created S3 location
+//     that holds the entirety of the message
+//
+// After all applicable messages are uploaded to S3, then the SQS native SendMessageBatch call is
+// invoked.
+//
+// AWS doc for [github.com/aws/aws-sdk-go-v2/service/sqs.Client.SendMessageBatch] for completeness:
+//
 // You can use SendMessageBatch to send up to 10 messages to the specified queue by assigning either
 // identical or different values to each message (or by not assigning values at all). This is a
 // batch version of SendMessage. For a FIFO queue, multiple messages within a single batch are
@@ -269,6 +284,8 @@ func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBa
 	g := new(errgroup.Group)
 
 	for i, e := range input.Entries {
+		i, e := i, e
+
 		// always copy the entry, regardless of size
 		copyEntries[i] = e
 
@@ -318,6 +335,10 @@ func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBa
 			copyEntries[i].MessageAttributes = updatedAttributes
 			copyEntries[i].MessageBody = aws.String(string(asBytes))
 		}
+	}
+
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 
 	// override entries with our copied ones

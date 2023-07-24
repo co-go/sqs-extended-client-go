@@ -72,6 +72,10 @@ func (m *mockS3Client) DeleteObjects(ctx context.Context, params *s3.DeleteObjec
 	return args.Get(0).(*s3.DeleteObjectsOutput), args.Error(1)
 }
 
+func getDefaultS3Pointer(bucket, key string) string {
+	return fmt.Sprintf(`["software.amazon.payloadoffloading.PayloadS3Pointer",{"s3BucketName":"%s","s3Key":"%s"}]`, bucket, key)
+}
+
 func TestNewClient(t *testing.T) {
 	c, err := New(nil, nil)
 	assert.Nil(t, err)
@@ -240,7 +244,7 @@ func TestSendMessage(t *testing.T) {
 		mock.MatchedBy(func(params *sqs.SendMessageInput) bool {
 			assert.Equal(t, "12", *params.MessageAttributes["ExtendedPayloadSize"].StringValue)
 			assert.Equal(t, "hi", *params.MessageAttributes["testing_attribute"].StringValue)
-			assert.Equal(t, fmt.Sprintf(`["software.amazon.payloadoffloading.PayloadS3Pointer",{"s3BucketName":"test_bucket","s3Key":"%s"}]`, *key), *params.MessageBody)
+			assert.Equal(t, getDefaultS3Pointer("test_bucket", *key), *params.MessageBody)
 
 			return true
 		}),
@@ -283,6 +287,114 @@ func TestSendMessageMarshalFailure(t *testing.T) {
 	assert.Nil(t, err)
 
 	_, err = c.SendMessage(context.Background(), &sqs.SendMessageInput{MessageBody: aws.String("testing body")})
+
+	assert.ErrorContains(t, err, "unable to marshal S3 pointer")
+}
+
+func TestSendMessageBatch(t *testing.T) {
+	key1, key2 := new(string), new(string)
+	ms3c := &mockS3Client{&mock.Mock{}}
+	ms3c.On(
+		"PutObject",
+		mock.Anything,
+		mock.MatchedBy(func(params *s3.PutObjectInput) bool {
+			assert.Equal(t, "test_bucket", *params.Bucket)
+
+			asBytes, err := io.ReadAll(params.Body)
+			assert.Nil(t, err)
+
+			switch string(asBytes) {
+			case "testing body 1":
+				key1 = params.Key
+				return true
+			case "testing body 2":
+				key2 = params.Key
+				return true
+			}
+
+			return false
+		}),
+		mock.Anything).
+		Return(&s3.PutObjectOutput{}, nil)
+
+	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
+	msqsc.On(
+		"SendMessageBatch",
+		mock.Anything,
+		mock.MatchedBy(func(params *sqs.SendMessageBatchInput) bool {
+			assert.Len(t, params.Entries, 2)
+			assert.Equal(t, "entry_1", *params.Entries[0].Id)
+			assert.Equal(t, "entry_2", *params.Entries[1].Id)
+			assert.Equal(t, getDefaultS3Pointer("test_bucket", *key1), *params.Entries[0].MessageBody)
+			assert.Equal(t, getDefaultS3Pointer("test_bucket", *key2), *params.Entries[1].MessageBody)
+			assert.Equal(t, "hi", *params.Entries[0].MessageAttributes["testing_attribute"].StringValue)
+			assert.Equal(t, "hello", *params.Entries[1].MessageAttributes["testing_attribute"].StringValue)
+			assert.Equal(t, "14", *params.Entries[0].MessageAttributes["ExtendedPayloadSize"].StringValue)
+			assert.Equal(t, "14", *params.Entries[1].MessageAttributes["ExtendedPayloadSize"].StringValue)
+			return true
+		}),
+		mock.Anything).
+		Return(&sqs.SendMessageBatchOutput{}, nil)
+
+	c, err := New(msqsc, ms3c, WithAlwaysS3(true), WithS3BucketName("test_bucket"))
+	assert.Nil(t, err)
+
+	_, err = c.SendMessageBatch(context.Background(), &sqs.SendMessageBatchInput{
+		Entries: []types.SendMessageBatchRequestEntry{
+			{
+				Id:          aws.String("entry_1"),
+				MessageBody: aws.String("testing body 1"),
+				MessageAttributes: map[string]types.MessageAttributeValue{
+					"testing_attribute": {StringValue: aws.String("hi")},
+				},
+			},
+			{
+				Id:          aws.String("entry_2"),
+				MessageBody: aws.String("testing body 2"),
+				MessageAttributes: map[string]types.MessageAttributeValue{
+					"testing_attribute": {StringValue: aws.String("hello")},
+				},
+			},
+		},
+	})
+
+	assert.Len(t, ms3c.Calls, 2)
+	assert.Nil(t, err)
+}
+
+func TestSendMessageBatchFailure(t *testing.T) {
+	ms3c := &mockS3Client{&mock.Mock{}}
+	ms3c.On("PutObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.PutObjectOutput{}, errors.New("boom"))
+
+	c, err := New(nil, ms3c, WithAlwaysS3(true))
+	assert.Nil(t, err)
+
+	_, err = c.SendMessageBatch(context.Background(), &sqs.SendMessageBatchInput{
+		Entries: []types.SendMessageBatchRequestEntry{
+			{MessageBody: aws.String("testing body 1")},
+			{MessageBody: aws.String("testing body 2")},
+		},
+	})
+
+	assert.ErrorContains(t, err, "unable to upload large payload to s3")
+}
+
+func TestSendMessageBatchMarshalFailure(t *testing.T) {
+	jsonMarshal = func(v any) ([]byte, error) { return nil, errors.New("boom") }
+	defer func() { jsonMarshal = json.Marshal }()
+
+	ms3c := &mockS3Client{&mock.Mock{}}
+	ms3c.On("PutObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.PutObjectOutput{}, nil)
+
+	c, err := New(nil, ms3c, WithAlwaysS3(true))
+	assert.Nil(t, err)
+
+	_, err = c.SendMessageBatch(context.Background(), &sqs.SendMessageBatchInput{
+		Entries: []types.SendMessageBatchRequestEntry{
+			{MessageBody: aws.String("testing body 1")},
+			{MessageBody: aws.String("testing body 2")},
+		},
+	})
 
 	assert.ErrorContains(t, err, "unable to marshal S3 pointer")
 }
