@@ -2,7 +2,10 @@ package sqsextendedclient
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -206,6 +209,82 @@ func TestS3PointerUnmarshalInvalidLength(t *testing.T) {
 	var p s3Pointer
 	err := p.UnmarshalJSON(str)
 	assert.ErrorContains(t, err, "invalid pointer format, expected length 2, but received [3]")
+}
+
+func TestSendMessage(t *testing.T) {
+	key := new(string)
+
+	ms3c := &mockS3Client{&mock.Mock{}}
+	ms3c.On(
+		"PutObject",
+		mock.Anything,
+		mock.MatchedBy(func(params *s3.PutObjectInput) bool {
+			key = params.Key
+
+			assert.Greater(t, len(*params.Key), 0)
+			assert.Equal(t, "test_bucket", *params.Bucket)
+
+			asBytes, err := io.ReadAll(params.Body)
+			assert.Nil(t, err)
+			assert.Equal(t, "testing body", string(asBytes))
+
+			return true
+		}),
+		mock.Anything).
+		Return(&s3.PutObjectOutput{}, nil)
+
+	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
+	msqsc.On(
+		"SendMessage",
+		mock.Anything,
+		mock.MatchedBy(func(params *sqs.SendMessageInput) bool {
+			assert.Equal(t, "12", *params.MessageAttributes["ExtendedPayloadSize"].StringValue)
+			assert.Equal(t, "hi", *params.MessageAttributes["testing_attribute"].StringValue)
+			assert.Equal(t, fmt.Sprintf(`["software.amazon.payloadoffloading.PayloadS3Pointer",{"s3BucketName":"test_bucket","s3Key":"%s"}]`, *key), *params.MessageBody)
+
+			return true
+		}),
+		mock.Anything).
+		Return(&sqs.SendMessageOutput{}, nil)
+
+	c, err := New(msqsc, ms3c, WithAlwaysS3(true), WithS3BucketName("test_bucket"))
+	assert.Nil(t, err)
+
+	_, err = c.SendMessage(context.Background(), &sqs.SendMessageInput{
+		MessageBody: aws.String("testing body"),
+		MessageAttributes: map[string]types.MessageAttributeValue{
+			"testing_attribute": {StringValue: aws.String("hi")},
+		},
+	})
+
+	assert.Nil(t, err)
+}
+
+func TestSendMessageS3Failure(t *testing.T) {
+	ms3c := &mockS3Client{&mock.Mock{}}
+	ms3c.On("PutObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.PutObjectOutput{}, errors.New("boom"))
+
+	c, err := New(nil, ms3c, WithAlwaysS3(true))
+	assert.Nil(t, err)
+
+	_, err = c.SendMessage(context.Background(), &sqs.SendMessageInput{MessageBody: aws.String("testing body")})
+
+	assert.ErrorContains(t, err, "unable to upload large payload to s3")
+}
+
+func TestSendMessageMarshalFailure(t *testing.T) {
+	jsonMarshal = func(v any) ([]byte, error) { return nil, errors.New("boom") }
+	defer func() { jsonMarshal = json.Marshal }()
+
+	ms3c := &mockS3Client{&mock.Mock{}}
+	ms3c.On("PutObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.PutObjectOutput{}, nil)
+
+	c, err := New(nil, ms3c, WithAlwaysS3(true))
+	assert.Nil(t, err)
+
+	_, err = c.SendMessage(context.Background(), &sqs.SendMessageInput{MessageBody: aws.String("testing body")})
+
+	assert.ErrorContains(t, err, "unable to marshal S3 pointer")
 }
 
 func TestParseExtendedReceiptHandle(t *testing.T) {
