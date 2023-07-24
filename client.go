@@ -27,11 +27,18 @@ const (
 	LegacyS3PointerClass        = "com.amazon.sqs.javamessaging.MessageS3Pointer"
 )
 
+type S3Client interface {
+	PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
+	GetObject(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error)
+	DeleteObject(ctx context.Context, params *s3.DeleteObjectInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
+	DeleteObjects(ctx context.Context, params *s3.DeleteObjectsInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectsOutput, error)
+}
+
 // Client is a wrapper for the [github.com/aws/aws-sdk-go-v2/service/sqs.Client], providing extra
 // functionality for retrieving, sending and deleting messages.
 type Client struct {
 	SQSClient
-	s3c                  *s3.Client
+	s3c                  S3Client
 	bucketName           string
 	messageSizeThreshold int64
 	alwaysThroughS3      bool
