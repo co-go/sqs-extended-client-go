@@ -17,7 +17,6 @@ import (
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
-	"github.com/aws/smithy-go/logging"
 	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 )
@@ -32,7 +31,6 @@ const (
 // functionality for retrieving, sending and deleting messages.
 type Client struct {
 	*sqs.Client
-	logging.Logger
 	s3c                  *s3.Client
 	bucketName           string
 	messageSizeThreshold int64
@@ -63,6 +61,7 @@ func New(
 		reservedAttrName:     "ExtendedPayloadSize",
 	}
 
+	// apply optFns to the base client
 	for _, optFn := range optFns {
 		err := optFn(&c)
 		if err != nil {
@@ -101,7 +100,7 @@ func WithAlwaysS3(alwaysS3 bool) ClientOption {
 }
 
 // Override the ReservedAttributeName with a custom value (i.e.
-// [LegacyS3PointerClass])
+// [LegacyReservedAttributeName])
 func WithReservedAttributeName(attributeName string) ClientOption {
 	return func(c *Client) error {
 		c.reservedAttrName = attributeName
