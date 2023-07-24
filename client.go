@@ -163,22 +163,6 @@ func (p *s3Pointer) UnmarshalJSON(in []byte) error {
 	return nil
 }
 
-var s3PointerRegex = regexp.MustCompile(`\[\s*"(.*)"\s*,\s*{"s3BucketName"\s*:\s*"(.*)"\s*,\s*"s3Key"\s*:\s*"(.*)"\s*}\s*\]`)
-
-func (p *s3Pointer) UnmarshalJSONNew(in []byte) error {
-	match := s3PointerRegex.FindStringSubmatch(string(in))
-
-	if len(match) != 4 {
-		return fmt.Errorf("invalid pointer format")
-	}
-
-	p.S3BucketName = match[2]
-	p.S3Key = match[3]
-	p.class = match[1]
-
-	return nil
-}
-
 func (p *s3Pointer) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf(`["%s",{"s3BucketName":"%s","s3Key":"%s"}]`, p.class, p.S3BucketName, p.S3Key)), nil
 }
