@@ -1,5 +1,5 @@
 <div align="center">
-<img src="doc/logo.png" style="max-width: 500px;"/>
+<img src="doc/logo.png" width="500px" />
 <h1>sqs-extended-client-go</h1>
 <i>Send and receive large messages through SQS via S3</i><br/><br/>
 <a href="https://goreportcard.com/report/github.com/jwcorle/sqs-extended-client-go"><img src="https://goreportcard.com/badge/github.com/jwcorle/sqs-extended-client-go"/></a> <a href="https://codecov.io/gh/jwcorle/sqs-extended-client-go" ><img src="https://codecov.io/gh/jwcorle/sqs-extended-client-go/branch/main/graph/badge.svg?token=OFGVL7Y8U5"/></a> <a href="https://pkg.go.dev/github.com/jwcorle/sqs-extended-client-go"><img src="https://pkg.go.dev/badge/github.com/jwcorle/sqs-extended-client-go.svg" alt="Go Reference"></a>
