@@ -192,6 +192,12 @@ func (p *s3Pointer) MarshalJSON() ([]byte, error) {
 //  2. Body of the original message overridden with a S3 Pointer to the newly created S3 location
 //     that holds the entirety of the message
 //
+// The S3 bucket used for large messages can be specified at either the client level (through the
+// WithS3BucketName [ClientOption]) or for an individual call by appending the QueueURL with a "|"
+// and the bucket name. For example: "https://sqs.amazonaws.com/1234/queue|bucket-for-messages". If
+// the bucket name is provided like this, it will override any S3 bucket that was provided at the
+// client level.
+//
 // AWS doc for [github.com/aws/aws-sdk-go-v2/service/sqs.Client.SendMessage] for completeness:
 //
 // Delivers a message to the specified queue. A message can include only XML, JSON, and unformatted
@@ -204,13 +210,20 @@ func (c *Client) SendMessage(ctx context.Context, params *sqs.SendMessageInput, 
 	// copy to avoid mutating params
 	input := *params
 
+	// determine bucket name, either from client or from provided SQS URL
+	parts := strings.Split(*params.QueueUrl, "|")
+	s3Bucket := c.bucketName
+	if len(parts) == 2 {
+		s3Bucket = parts[1]
+	}
+
 	if c.alwaysThroughS3 || c.messageExceedsThreshold(input.MessageBody, input.MessageAttributes) {
 		// generate UUID filename
 		s3Key := uuid.New().String()
 
 		// upload large payload to S3
 		_, err := c.s3c.PutObject(ctx, &s3.PutObjectInput{
-			Bucket: &c.bucketName,
+			Bucket: &s3Bucket,
 			Key:    aws.String(s3Key),
 			Body:   strings.NewReader(*input.MessageBody),
 		})
@@ -221,7 +234,7 @@ func (c *Client) SendMessage(ctx context.Context, params *sqs.SendMessageInput, 
 
 		// create an s3 pointer that will be uploaded to SQS in place of the large payload
 		asBytes, err := jsonMarshal(&s3Pointer{
-			S3BucketName: c.bucketName,
+			S3BucketName: s3Bucket,
 			S3Key:        s3Key,
 			class:        c.pointerClass,
 		})
@@ -263,6 +276,12 @@ func (c *Client) SendMessage(ctx context.Context, params *sqs.SendMessageInput, 
 // After all applicable messages are uploaded to S3, then the SQS native SendMessageBatch call is
 // invoked.
 //
+// The S3 bucket used for large messages can be specified at either the client level (through the
+// WithS3BucketName [ClientOption]) or for an individual call by appending the QueueURL with a "|"
+// and the bucket name. For example: "https://sqs.amazonaws.com/1234/queue|bucket-for-messages". If
+// the bucket name is provided like this, it will override any S3 bucket that was provided at the
+// client level.
+//
 // AWS doc for [github.com/aws/aws-sdk-go-v2/service/sqs.Client.SendMessageBatch] for completeness:
 //
 // You can use SendMessageBatch to send up to 10 messages to the specified queue by assigning either
@@ -283,6 +302,13 @@ func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBa
 	copyEntries := make([]types.SendMessageBatchRequestEntry, len(input.Entries))
 	g := new(errgroup.Group)
 
+	// determine bucket name, either from client or from provided SQS URL
+	parts := strings.Split(*params.QueueUrl, "|")
+	s3Bucket := c.bucketName
+	if len(parts) == 2 {
+		s3Bucket = parts[1]
+	}
+
 	for i, e := range input.Entries {
 		i, e := i, e
 
@@ -296,7 +322,7 @@ func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBa
 			// upload large payload to S3
 			g.Go(func() error {
 				_, err := c.s3c.PutObject(ctx, &s3.PutObjectInput{
-					Bucket: &c.bucketName,
+					Bucket: &s3Bucket,
 					Key:    aws.String(s3Key),
 					Body:   strings.NewReader(*e.MessageBody),
 				})
@@ -310,7 +336,7 @@ func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBa
 
 			// create an s3 pointer that will be uploaded to SQS in place of the large payload
 			asBytes, err := jsonMarshal(&s3Pointer{
-				S3BucketName: c.bucketName,
+				S3BucketName: s3Bucket,
 				S3Key:        s3Key,
 				class:        c.pointerClass,
 			})
@@ -357,7 +383,8 @@ func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBa
 // will be parsed to determine the S3 location of the full message body. This S3 location is read,
 // and the body of the record will be overwritten with the contents. The last update is made to the
 // record's ReceiptHandle, setting it to a unique pattern for the Extended SQS Client to be able to
-// delete the S3 file when the SQS message is deleted (see [*Client.DeleteMessage] for more details).
+// delete the S3 file when the SQS message is deleted (see [*Client.DeleteMessage] for more
+// details).
 //
 // AWS doc for [github.com/aws/aws-sdk-go-v2/service/sqs.Client.ReceiveMessage] for completeness:
 //

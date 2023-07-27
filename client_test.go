@@ -233,7 +233,7 @@ func TestSendMessage(t *testing.T) {
 			key = params.Key
 
 			assert.Greater(t, len(*params.Key), 0)
-			assert.Equal(t, "test_bucket", *params.Bucket)
+			assert.Equal(t, "override_bucket", *params.Bucket)
 
 			asBytes, err := io.ReadAll(params.Body)
 			assert.Nil(t, err)
@@ -251,7 +251,7 @@ func TestSendMessage(t *testing.T) {
 		mock.MatchedBy(func(params *sqs.SendMessageInput) bool {
 			assert.Equal(t, "12", *params.MessageAttributes["ExtendedPayloadSize"].StringValue)
 			assert.Equal(t, "hi", *params.MessageAttributes["testing_attribute"].StringValue)
-			assert.Equal(t, getDefaultS3Pointer("test_bucket", *key), *params.MessageBody)
+			assert.Equal(t, getDefaultS3Pointer("override_bucket", *key), *params.MessageBody)
 
 			return true
 		}),
@@ -266,6 +266,7 @@ func TestSendMessage(t *testing.T) {
 		MessageAttributes: map[string]types.MessageAttributeValue{
 			"testing_attribute": {StringValue: aws.String("hi")},
 		},
+		QueueUrl: aws.String("testing_url|override_bucket"),
 	})
 
 	assert.Nil(t, err)
@@ -278,7 +279,12 @@ func TestSendMessageS3Failure(t *testing.T) {
 	c, err := New(nil, ms3c, WithAlwaysS3(true))
 	assert.Nil(t, err)
 
-	_, err = c.SendMessage(context.Background(), &sqs.SendMessageInput{MessageBody: aws.String("testing body")})
+	_, err = c.SendMessage(
+		context.Background(),
+		&sqs.SendMessageInput{
+			MessageBody: aws.String("testing body"),
+			QueueUrl:    aws.String("testing_url"),
+		})
 
 	assert.ErrorContains(t, err, "unable to upload large payload to s3")
 }
@@ -293,7 +299,12 @@ func TestSendMessageMarshalFailure(t *testing.T) {
 	c, err := New(nil, ms3c, WithAlwaysS3(true))
 	assert.Nil(t, err)
 
-	_, err = c.SendMessage(context.Background(), &sqs.SendMessageInput{MessageBody: aws.String("testing body")})
+	_, err = c.SendMessage(
+		context.Background(),
+		&sqs.SendMessageInput{
+			MessageBody: aws.String("testing body"),
+			QueueUrl:    aws.String("testing_url"),
+		})
 
 	assert.ErrorContains(t, err, "unable to marshal S3 pointer")
 }
@@ -305,7 +316,7 @@ func TestSendMessageBatch(t *testing.T) {
 		"PutObject",
 		mock.Anything,
 		mock.MatchedBy(func(params *s3.PutObjectInput) bool {
-			assert.Equal(t, "test_bucket", *params.Bucket)
+			assert.Equal(t, "override_bucket", *params.Bucket)
 
 			asBytes, err := io.ReadAll(params.Body)
 			assert.Nil(t, err)
@@ -332,8 +343,8 @@ func TestSendMessageBatch(t *testing.T) {
 			assert.Len(t, params.Entries, 2)
 			assert.Equal(t, "entry_1", *params.Entries[0].Id)
 			assert.Equal(t, "entry_2", *params.Entries[1].Id)
-			assert.Equal(t, getDefaultS3Pointer("test_bucket", *key1), *params.Entries[0].MessageBody)
-			assert.Equal(t, getDefaultS3Pointer("test_bucket", *key2), *params.Entries[1].MessageBody)
+			assert.Equal(t, getDefaultS3Pointer("override_bucket", *key1), *params.Entries[0].MessageBody)
+			assert.Equal(t, getDefaultS3Pointer("override_bucket", *key2), *params.Entries[1].MessageBody)
 			assert.Equal(t, "hi", *params.Entries[0].MessageAttributes["testing_attribute"].StringValue)
 			assert.Equal(t, "hello", *params.Entries[1].MessageAttributes["testing_attribute"].StringValue)
 			assert.Equal(t, "14", *params.Entries[0].MessageAttributes["ExtendedPayloadSize"].StringValue)
@@ -363,6 +374,7 @@ func TestSendMessageBatch(t *testing.T) {
 				},
 			},
 		},
+		QueueUrl: aws.String("testing_url|override_bucket"),
 	})
 
 	assert.Len(t, ms3c.Calls, 2)
@@ -381,6 +393,7 @@ func TestSendMessageBatchFailure(t *testing.T) {
 			{MessageBody: aws.String("testing body 1")},
 			{MessageBody: aws.String("testing body 2")},
 		},
+		QueueUrl: aws.String("testing_url"),
 	})
 
 	assert.ErrorContains(t, err, "unable to upload large payload to s3")
@@ -401,6 +414,7 @@ func TestSendMessageBatchMarshalFailure(t *testing.T) {
 			{MessageBody: aws.String("testing body 1")},
 			{MessageBody: aws.String("testing body 2")},
 		},
+		QueueUrl: aws.String("testing_url"),
 	})
 
 	assert.ErrorContains(t, err, "unable to marshal S3 pointer")
