@@ -14,7 +14,7 @@ setup:
 	$(call log_done)
 
 generate_sqs:
-	$(call log_info, Generating SQS interface)
+	$(call log_info, Generating SQS interface...)
 	@mkdir tmp_aws
 	@git clone --no-checkout --filter=tree:0 https://github.com/aws/aws-sdk-go-v2 tmp_aws
 	@cd tmp_aws; git sparse-checkout set --no-cone service/sqs && git checkout
@@ -22,4 +22,9 @@ generate_sqs:
 	@sed -i '' 's/*/*sqs./gi' sqs.go
 	@sed -i '' 's|"context"|"context"\n\n\t"github.com/aws/aws-sdk-go-v2/service/sqs"|gi' sqs.go
 	@rm -rf tmp_aws
+	$(call log_done)
+
+test:
+	$(call log_info, Running tests...)
+	go test -v ./... -cover
 	$(call log_done)

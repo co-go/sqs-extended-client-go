@@ -582,7 +582,7 @@ func parseExtendedReceiptHandle(extendedHandle string) (bucket, key, handle stri
 // DeleteMessage is a SQS Extended Client wrapper for the
 // [github.com/aws/aws-sdk-go-v2/service/sqs.Client.DeleteMessage] function. If the provided
 // params.ReceiptHandle matches with the format expected for the extended SQS client, it will be
-// parsed and the linked S3 file will be deleted before finally deleting the actual SQS message.
+// parsed and the linked S3 file will be deleted along with the actual SQS message.
 //
 // AWS doc for [github.com/aws/aws-sdk-go-v2/service/sqs.Client.DeleteMessage] for completeness:
 //
@@ -605,27 +605,30 @@ func (c *Client) DeleteMessage(ctx context.Context, params *sqs.DeleteMessageInp
 
 	bucket, key, handle := parseExtendedReceiptHandle(*input.ReceiptHandle)
 	if bucket != "" && key != "" && handle != "" {
-		_, err := c.s3c.DeleteObject(ctx, &s3.DeleteObjectInput{
-			Bucket: &bucket,
-			Key:    &key,
-		})
-
-		if err != nil {
-			return nil, err
-		}
-
 		// override extended handle with actual sqs handle
 		input.ReceiptHandle = &handle
 	}
 
-	return c.SQSClient.DeleteMessage(ctx, &input, optFns...)
+	resp, err := c.SQSClient.DeleteMessage(ctx, &input, optFns...)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if bucket != "" && key != "" {
+		_, err = c.s3c.DeleteObject(ctx, &s3.DeleteObjectInput{
+			Bucket: &bucket,
+			Key:    &key,
+		})
+	}
+
+	return resp, err
 }
 
 // DeleteMessageBatch is a SQS Extended Client wrapper for the
 // [github.com/aws/aws-sdk-go-v2/service/sqs.Client.DeleteMessageBatch] function. For each entry
 // provided, if its ReceiptHandle matches with the format expected for the extended SQS client, it
-// will be parsed and the linked S3 file will be deleted before finally deleting the actual SQS
-// message.
+// will be parsed and the linked S3 file will be deleted along with the actual SQS message.
 //
 // AWS doc for [github.com/aws/aws-sdk-go-v2/service/sqs.Client.DeleteMessageBatch] for
 // completeness:
@@ -662,6 +665,13 @@ func (c *Client) DeleteMessageBatch(ctx context.Context, params *sqs.DeleteMessa
 		}
 	}
 
+	input.Entries = copyEntries
+	resp, err := c.SQSClient.DeleteMessageBatch(ctx, &input, optFns...)
+
+	if err != nil {
+		return nil, err
+	}
+
 	g := new(errgroup.Group)
 
 	// for each delete request (grouped by bucket), send DeleteObjects call in parallel
@@ -677,11 +687,5 @@ func (c *Client) DeleteMessageBatch(ctx context.Context, params *sqs.DeleteMessa
 		})
 	}
 
-	if err := g.Wait(); err != nil {
-		return nil, err
-	}
-
-	input.Entries = copyEntries
-
-	return c.SQSClient.DeleteMessageBatch(ctx, &input, optFns...)
+	return resp, g.Wait()
 }

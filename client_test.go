@@ -749,10 +749,35 @@ func TestDeleteMessageNonExtended(t *testing.T) {
 }
 
 func TestDeleteMessageS3Error(t *testing.T) {
+	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
+	msqsc.On(
+		"DeleteMessage",
+		mock.Anything,
+		mock.MatchedBy(func(params *sqs.DeleteMessageInput) bool {
+			assert.Equal(t, "abcdefg", *params.ReceiptHandle)
+			return true
+		}),
+		mock.Anything).
+		Return(&sqs.DeleteMessageOutput{}, nil)
+
 	ms3c := &mockS3Client{&mock.Mock{}}
 	ms3c.On("DeleteObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.DeleteObjectOutput{}, errors.New("boom"))
 
-	c, err := New(nil, ms3c)
+	c, err := New(msqsc, ms3c)
+	assert.Nil(t, err)
+
+	_, err = c.DeleteMessage(context.Background(), &sqs.DeleteMessageInput{
+		ReceiptHandle: aws.String("-..s3BucketName..-some-bucket-..s3BucketName..--..s3Key..-some-key-..s3Key..-abcdefg"),
+	})
+
+	assert.Error(t, err)
+}
+
+func TestDeleteMessageSQSError(t *testing.T) {
+	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
+	msqsc.On("DeleteMessage", mock.Anything, mock.Anything, mock.Anything).Return(&sqs.DeleteMessageOutput{}, errors.New("boom"))
+
+	c, err := New(msqsc, nil)
 	assert.Nil(t, err)
 
 	_, err = c.DeleteMessage(context.Background(), &sqs.DeleteMessageInput{
@@ -835,7 +860,29 @@ func TestDeleteMessageBatchS3Error(t *testing.T) {
 	ms3c := &mockS3Client{&mock.Mock{}}
 	ms3c.On("DeleteObjects", mock.Anything, mock.Anything, mock.Anything).Return(&s3.DeleteObjectsOutput{}, errors.New("boom"))
 
-	c, err := New(nil, ms3c)
+	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
+	msqsc.On("DeleteMessageBatch", mock.Anything, mock.Anything, mock.Anything).Return(&sqs.DeleteMessageBatchOutput{}, nil)
+
+	c, err := New(msqsc, ms3c)
+	assert.Nil(t, err)
+
+	_, err = c.DeleteMessageBatch(context.Background(), &sqs.DeleteMessageBatchInput{
+		Entries: []types.DeleteMessageBatchRequestEntry{
+			{
+				Id:            aws.String("object_1"),
+				ReceiptHandle: aws.String("-..s3BucketName..-some-bucket-..s3BucketName..--..s3Key..-some-key-..s3Key..-abcdefg"),
+			},
+		},
+	})
+
+	assert.Error(t, err)
+}
+
+func TestDeleteMessageBatchSQSError(t *testing.T) {
+	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
+	msqsc.On("DeleteMessageBatch", mock.Anything, mock.Anything, mock.Anything).Return(&sqs.DeleteMessageBatchOutput{}, errors.New("boom"))
+
+	c, err := New(msqsc, nil)
 	assert.Nil(t, err)
 
 	_, err = c.DeleteMessageBatch(context.Background(), &sqs.DeleteMessageBatchInput{
