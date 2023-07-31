@@ -90,7 +90,7 @@ func TestNewClient(t *testing.T) {
 	// ensure defaults are set correctly
 	assert.Equal(t, int64(262144), c.messageSizeThreshold)
 	assert.Equal(t, "software.amazon.payloadoffloading.PayloadS3Pointer", c.pointerClass)
-	assert.Equal(t, "ExtendedPayloadSize", c.reservedAttrName)
+	assert.Equal(t, []string{"ExtendedPayloadSize", "SQSLargePayloadSize"}, c.reservedAttrs)
 }
 
 func TestNewClientOptions(t *testing.T) {
@@ -100,7 +100,7 @@ func TestNewClientOptions(t *testing.T) {
 		WithAlwaysS3(true),
 		WithMessageSizeThreshold(123),
 		WithPointerClass("pointer.class"),
-		WithReservedAttributeName("Reserved"),
+		WithReservedAttributeNames([]string{"Reserved", "Attributes"}),
 		WithS3BucketName("BUCKET!"),
 	)
 
@@ -110,7 +110,7 @@ func TestNewClientOptions(t *testing.T) {
 	assert.Equal(t, true, c.alwaysThroughS3)
 	assert.Equal(t, int64(123), c.messageSizeThreshold)
 	assert.Equal(t, "pointer.class", c.pointerClass)
-	assert.Equal(t, "Reserved", c.reservedAttrName)
+	assert.Equal(t, []string{"Reserved", "Attributes"}, c.reservedAttrs)
 	assert.Equal(t, "BUCKET!", c.bucketName)
 }
 
@@ -426,7 +426,7 @@ func TestReceiveMessage(t *testing.T) {
 		"ReceiveMessage",
 		mock.Anything,
 		mock.MatchedBy(func(params *sqs.ReceiveMessageInput) bool {
-			assert.Equal(t, []string{"ExtendedPayloadSize"}, params.MessageAttributeNames)
+			assert.Equal(t, []string{"CustomAttr", "ExtendedPayloadSize", "SQSLargePayloadSize"}, params.MessageAttributeNames)
 			return true
 		}),
 		mock.Anything).
@@ -440,23 +440,54 @@ func TestReceiveMessage(t *testing.T) {
 				Body:          aws.String("non s3 pointer body"),
 				ReceiptHandle: aws.String("mock-handle-456"),
 			},
+			{
+				Body:              aws.String(getDefaultS3Pointer("test-bucket-2", "test-item-2")),
+				MessageAttributes: map[string]types.MessageAttributeValue{"SQSLargePayloadSize": {}},
+				ReceiptHandle:     aws.String("mock-handle-123"),
+			},
 		}}, nil)
 
 	ms3c := &mockS3Client{&mock.Mock{}}
-	ms3c.On("GetObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.GetObjectOutput{
-		Body: io.NopCloser(strings.NewReader("hiya")),
-	}, nil)
+	ms3c.On(
+		"GetObject",
+		mock.Anything,
+		mock.MatchedBy(func(params *s3.GetObjectInput) bool {
+			if *params.Bucket == "test-bucket" && *params.Key == "test-item" {
+				return true
+			}
+
+			return false
+		}),
+		mock.Anything).
+		Return(&s3.GetObjectOutput{Body: io.NopCloser(strings.NewReader("object1"))}, nil)
+
+	ms3c.On(
+		"GetObject",
+		mock.Anything,
+		mock.MatchedBy(func(params *s3.GetObjectInput) bool {
+			if *params.Bucket == "test-bucket-2" && *params.Key == "test-item-2" {
+				return true
+			}
+
+			return false
+		}),
+		mock.Anything).
+		Return(&s3.GetObjectOutput{Body: io.NopCloser(strings.NewReader("object2"))}, nil)
 
 	c, err := New(msqsc, ms3c)
 	assert.Nil(t, err)
 
-	resp, err := c.ReceiveMessage(context.Background(), &sqs.ReceiveMessageInput{})
+	resp, err := c.ReceiveMessage(context.Background(), &sqs.ReceiveMessageInput{
+		MessageAttributeNames: []string{"CustomAttr"},
+	})
 	assert.Nil(t, err)
 
-	assert.Equal(t, "hiya", *resp.Messages[0].Body)
+	assert.Equal(t, "object1", *resp.Messages[0].Body)
 	assert.Equal(t, "-..s3BucketName..-test-bucket-..s3BucketName..--..s3Key..-test-item-..s3Key..-mock-handle-123", *resp.Messages[0].ReceiptHandle)
 	assert.Equal(t, "non s3 pointer body", *resp.Messages[1].Body)
 	assert.Equal(t, "mock-handle-456", *resp.Messages[1].ReceiptHandle)
+	assert.Equal(t, "object2", *resp.Messages[2].Body)
+	assert.Equal(t, "-..s3BucketName..-test-bucket-2-..s3BucketName..--..s3Key..-test-item-2-..s3Key..-mock-handle-123", *resp.Messages[2].ReceiptHandle)
 }
 
 func TestReceiveMessageAllAttributes(t *testing.T) {
@@ -607,11 +638,28 @@ func TestRetrieveLambdaEvent(t *testing.T) {
 			"GetObject",
 			mock.Anything,
 			mock.MatchedBy(func(params *s3.GetObjectInput) bool {
-				assert.Equal(t, "test-bucket", *params.Bucket)
-				return true
+				if *params.Bucket == "test-bucket" && *params.Key == "test-event" {
+					return true
+				}
+
+				return false
 			}),
 			mock.Anything).
-		Return(&s3.GetObjectOutput{Body: io.NopCloser(strings.NewReader("hiya"))}, nil)
+		Return(&s3.GetObjectOutput{Body: io.NopCloser(strings.NewReader("object1"))}, nil)
+
+	ms3c.
+		On(
+			"GetObject",
+			mock.Anything,
+			mock.MatchedBy(func(params *s3.GetObjectInput) bool {
+				if *params.Bucket == "test-bucket-2" && *params.Key == "test-event-2" {
+					return true
+				}
+
+				return false
+			}),
+			mock.Anything).
+		Return(&s3.GetObjectOutput{Body: io.NopCloser(strings.NewReader("object2"))}, nil)
 
 	c, err := New(nil, ms3c)
 	assert.Nil(t, err)
@@ -627,14 +675,21 @@ func TestRetrieveLambdaEvent(t *testing.T) {
 				Body:          "normal non-pointer body",
 				ReceiptHandle: "something-else",
 			},
+			{
+				Body:              getDefaultS3Pointer("test-bucket-2", "test-event-2"),
+				MessageAttributes: map[string]events.SQSMessageAttribute{"SQSLargePayloadSize": {}},
+				ReceiptHandle:     "mock-handle-123",
+			},
 		},
 	})
 
 	assert.Nil(t, err)
-	assert.Equal(t, "hiya", resp.Records[0].Body)
+	assert.Equal(t, "object1", resp.Records[0].Body)
 	assert.Equal(t, "-..s3BucketName..-test-bucket-..s3BucketName..--..s3Key..-test-event-..s3Key..-something-or-other", resp.Records[0].ReceiptHandle)
 	assert.Equal(t, "normal non-pointer body", resp.Records[1].Body)
 	assert.Equal(t, "something-else", resp.Records[1].ReceiptHandle)
+	assert.Equal(t, "object2", resp.Records[2].Body)
+	assert.Equal(t, "-..s3BucketName..-test-bucket-2-..s3BucketName..--..s3Key..-test-event-2-..s3Key..-mock-handle-123", resp.Records[2].ReceiptHandle)
 }
 
 func TestRetrieveLambdaEventJSONError(t *testing.T) {

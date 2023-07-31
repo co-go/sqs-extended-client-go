@@ -48,7 +48,7 @@ type Client struct {
 	messageSizeThreshold int64
 	alwaysThroughS3      bool
 	pointerClass         string
-	reservedAttrName     string
+	reservedAttrs        []string
 }
 
 type ClientOption func(*Client) error
@@ -70,7 +70,7 @@ func New(
 		s3c:                  s3c,
 		messageSizeThreshold: 262144, // 256 KiB
 		pointerClass:         "software.amazon.payloadoffloading.PayloadS3Pointer",
-		reservedAttrName:     "ExtendedPayloadSize",
+		reservedAttrs:        []string{"ExtendedPayloadSize", LegacyReservedAttributeName},
 	}
 
 	// apply optFns to the base client
@@ -111,11 +111,14 @@ func WithAlwaysS3(alwaysS3 bool) ClientOption {
 	}
 }
 
-// Override the ReservedAttributeName with a custom value (i.e.
-// [LegacyReservedAttributeName])
-func WithReservedAttributeName(attributeName string) ClientOption {
+// WithReservedAttributeNames allows the user of the client to provide a list of attributes that
+// will be used to identify large messages both sent and received by the created client. When
+// sending messages, only the first attribute provided will be attached to the MessageAttributes.
+// When receiving messages, all provided attributes will be checked to determine if the message has
+// an extended payload in S3.
+func WithReservedAttributeNames(attributeNames []string) ClientOption {
 	return func(c *Client) error {
-		c.reservedAttrName = attributeName
+		c.reservedAttrs = attributeNames
 		return nil
 	}
 }
@@ -250,7 +253,7 @@ func (c *Client) SendMessage(ctx context.Context, params *sqs.SendMessageInput, 
 		}
 
 		// assign the reserved attribute to a number containing the size of the original body
-		updatedAttributes[c.reservedAttrName] = types.MessageAttributeValue{
+		updatedAttributes[c.reservedAttrs[0]] = types.MessageAttributeValue{
 			DataType:    aws.String("Number"),
 			StringValue: aws.String(strconv.Itoa(len(*input.MessageBody))),
 		}
@@ -352,7 +355,7 @@ func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBa
 			}
 
 			// assign the reserved attribute to a number containing the size of the original body
-			updatedAttributes[c.reservedAttrName] = types.MessageAttributeValue{
+			updatedAttributes[c.reservedAttrs[0]] = types.MessageAttributeValue{
 				DataType:    aws.String("Number"),
 				StringValue: aws.String(strconv.Itoa(len(*e.MessageBody))),
 			}
@@ -425,19 +428,26 @@ func (c *Client) ReceiveMessage(ctx context.Context, params *sqs.ReceiveMessageI
 	includesAll := false
 
 	// copy attributes over to avoid mutating
-	messageAttributeCopy := make([]string, len(input.MessageAttributeNames)+1)
+	messageAttributeCopy := make([]string, len(input.MessageAttributeNames)+len(c.reservedAttrs))
 	for i, a := range input.MessageAttributeNames {
 		messageAttributeCopy[i] = a
 		if a == "All" || a == ".*" {
 			includesAll = true
-		} else if a == c.reservedAttrName {
-			includesAttributeName = true
+		}
+
+		for _, reservedAttr := range c.reservedAttrs {
+			if a == reservedAttr {
+				includesAttributeName = true
+			}
 		}
 	}
 
 	// if the reserved attribute name is not present, add it to the list
 	if !includesAttributeName && !includesAll {
-		messageAttributeCopy[len(input.MessageAttributeNames)] = c.reservedAttrName
+		for i, reservedAttr := range c.reservedAttrs {
+			messageAttributeCopy[len(input.MessageAttributeNames)+i] = reservedAttr
+		}
+
 		input.MessageAttributeNames = messageAttributeCopy
 	}
 
@@ -454,8 +464,16 @@ func (c *Client) ReceiveMessage(ctx context.Context, params *sqs.ReceiveMessageI
 		i, m := i, m
 
 		g.Go(func() error {
+			found := false
+			for _, reservedAttr := range c.reservedAttrs {
+				if _, ok := m.MessageAttributes[reservedAttr]; ok {
+					found = true
+					break
+				}
+			}
+
 			// check for reserved attribute name, skip processing if not present
-			if _, ok := m.MessageAttributes[c.reservedAttrName]; !ok {
+			if !found {
 				return nil
 			}
 
@@ -526,8 +544,16 @@ func (c *Client) RetrieveLambdaEvent(ctx context.Context, evt *events.SQSEvent) 
 		copyRecords[i] = r
 
 		g.Go(func() error {
+			found := false
+			for _, reservedAttr := range c.reservedAttrs {
+				if _, ok := r.MessageAttributes[reservedAttr]; ok {
+					found = true
+					break
+				}
+			}
+
 			// check for reserved attribute name, skip processing if not present
-			if _, ok := r.MessageAttributes[c.reservedAttrName]; !ok {
+			if !found {
 				return nil
 			}
 
