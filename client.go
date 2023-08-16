@@ -213,12 +213,13 @@ func (c *Client) SendMessage(ctx context.Context, params *sqs.SendMessageInput, 
 	// copy to avoid mutating params
 	input := *params
 
-	// determine bucket name, either from client or from provided SQS URL
-	parts := strings.Split(*params.QueueUrl, "|")
-	s3Bucket := c.bucketName
-	if len(parts) == 2 {
-		s3Bucket = parts[1]
+	// determine bucket name, either from client (default) or from provided SQS URL
+	queueURL, s3Bucket, found := strings.Cut(*params.QueueUrl, "|")
+	if !found {
+		s3Bucket = c.bucketName
 	}
+
+	input.QueueUrl = &queueURL
 
 	if c.alwaysThroughS3 || c.messageExceedsThreshold(input.MessageBody, input.MessageAttributes) {
 		// generate UUID filename
@@ -305,12 +306,13 @@ func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBa
 	copyEntries := make([]types.SendMessageBatchRequestEntry, len(input.Entries))
 	g := new(errgroup.Group)
 
-	// determine bucket name, either from client or from provided SQS URL
-	parts := strings.Split(*params.QueueUrl, "|")
-	s3Bucket := c.bucketName
-	if len(parts) == 2 {
-		s3Bucket = parts[1]
+	// determine bucket name, either from client (default) or from provided SQS URL
+	queueURL, s3Bucket, found := strings.Cut(*params.QueueUrl, "|")
+	if !found {
+		s3Bucket = c.bucketName
 	}
+
+	input.QueueUrl = &queueURL
 
 	for i, e := range input.Entries {
 		i, e := i, e

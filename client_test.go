@@ -252,6 +252,7 @@ func TestSendMessage(t *testing.T) {
 			assert.Equal(t, "12", *params.MessageAttributes["ExtendedPayloadSize"].StringValue)
 			assert.Equal(t, "hi", *params.MessageAttributes["testing_attribute"].StringValue)
 			assert.Equal(t, getDefaultS3Pointer("override_bucket", *key), *params.MessageBody)
+			assert.Equal(t, "testing_url", *params.QueueUrl)
 
 			return true
 		}),
@@ -340,6 +341,7 @@ func TestSendMessageBatch(t *testing.T) {
 		"SendMessageBatch",
 		mock.Anything,
 		mock.MatchedBy(func(params *sqs.SendMessageBatchInput) bool {
+			assert.Equal(t, "testing_url", *params.QueueUrl)
 			assert.Len(t, params.Entries, 2)
 			assert.Equal(t, "entry_1", *params.Entries[0].Id)
 			assert.Equal(t, "entry_2", *params.Entries[1].Id)
