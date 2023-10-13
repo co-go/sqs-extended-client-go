@@ -225,7 +225,7 @@ func TestS3PointerUnmarshalInvalidLength(t *testing.T) {
 }
 
 func TestWithObjectPrefix(t *testing.T) {
-	invalidPrefixes := []string{"../test", "./test", "tes&", "te$t", "testñ", "te@st", "test=", "test;", "test:", "+test", "te st", "te,st", "test?"}
+	invalidPrefixes := []string{"../test", "./test", "tes&", "te$t", "testñ", "te@st", "test=", "test;", "test:", "+test", "te st", "te,st", "test?", "te\\st", "test{", "test^", "test}", "te`st", "]test", "test\"", "test>", "test]", "test~", "test<", "te#st", "|test"}
 	for _, prefix := range invalidPrefixes {
 		_, err := New(
 			nil,
