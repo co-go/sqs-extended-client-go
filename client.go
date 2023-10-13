@@ -135,7 +135,7 @@ func WithPointerClass(pointerClass string) ClientOption {
 	}
 }
 
-// WithObjectPrefix attach a prefix to the object key (prefix/uuid)
+// WithObjectPrefix attaches a prefix to the object key (prefix/uuid)
 func WithObjectPrefix(prefix string) ClientOption {
 	return func(c *Client) error {
 		if !validObjectNameRegex.MatchString(prefix) {
