@@ -33,6 +33,7 @@ var (
 	jsonMarshal     = json.Marshal
 	ErrObjectPrefix = errors.New("object prefix contains invalid characters")
 )
+var validObjectNameRegex = regexp.MustCompile("^[0-9a-zA-Z!_.*'()-]+$")
 
 type S3Client interface {
 	PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
@@ -136,9 +137,8 @@ func WithPointerClass(pointerClass string) ClientOption {
 
 // WithObjectPrefix attach a prefix to the object key (prefix/uuid)
 func WithObjectPrefix(prefix string) ClientOption {
-	r, _ := regexp.Compile("^[0-9a-zA-Z!_.*'()-]+$")
 	return func(c *Client) error {
-		if !r.MatchString(prefix) {
+		if !validObjectNameRegex.MatchString(prefix) {
 			return ErrObjectPrefix
 		}
 		c.objectPrefix = prefix
