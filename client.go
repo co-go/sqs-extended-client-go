@@ -3,6 +3,7 @@ package sqsextendedclient
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -28,8 +29,9 @@ const (
 )
 
 var (
-	jsonUnmarshal = json.Unmarshal
-	jsonMarshal   = json.Marshal
+	jsonUnmarshal   = json.Unmarshal
+	jsonMarshal     = json.Marshal
+	ErrObjectPrefix = errors.New("object prefix contains invalid characters")
 )
 
 type S3Client interface {
@@ -49,6 +51,7 @@ type Client struct {
 	alwaysThroughS3      bool
 	pointerClass         string
 	reservedAttrs        []string
+	objectPrefix         string
 }
 
 type ClientOption func(*Client) error
@@ -127,6 +130,18 @@ func WithReservedAttributeNames(attributeNames []string) ClientOption {
 func WithPointerClass(pointerClass string) ClientOption {
 	return func(c *Client) error {
 		c.pointerClass = pointerClass
+		return nil
+	}
+}
+
+// WithObjectPrefix attach a prefix to the object key (prefix/uuid)
+func WithObjectPrefix(prefix string) ClientOption {
+	r, _ := regexp.Compile("^[0-9a-zA-Z!_.*'()-]+$")
+	return func(c *Client) error {
+		if !r.MatchString(prefix) {
+			return ErrObjectPrefix
+		}
+		c.objectPrefix = prefix
 		return nil
 	}
 }
@@ -224,6 +239,11 @@ func (c *Client) SendMessage(ctx context.Context, params *sqs.SendMessageInput, 
 	if c.alwaysThroughS3 || c.messageExceedsThreshold(input.MessageBody, input.MessageAttributes) {
 		// generate UUID filename
 		s3Key := uuid.New().String()
+
+		// attach objectPrefix if exists
+		if c.objectPrefix != "" {
+			s3Key = fmt.Sprintf("%s/%s", c.objectPrefix, s3Key)
+		}
 
 		// upload large payload to S3
 		_, err := c.s3c.PutObject(ctx, &s3.PutObjectInput{
@@ -323,6 +343,11 @@ func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBa
 		if c.alwaysThroughS3 || c.messageExceedsThreshold(e.MessageBody, e.MessageAttributes) {
 			// generate UUID filename
 			s3Key := uuid.New().String()
+
+			// attach objectPrefix if exists
+			if c.objectPrefix != "" {
+				s3Key = fmt.Sprintf("%s/%s", c.objectPrefix, s3Key)
+			}
 
 			// upload large payload to S3
 			g.Go(func() error {

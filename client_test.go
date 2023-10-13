@@ -102,6 +102,7 @@ func TestNewClientOptions(t *testing.T) {
 		WithPointerClass("pointer.class"),
 		WithReservedAttributeNames([]string{"Reserved", "Attributes"}),
 		WithS3BucketName("BUCKET!"),
+		WithObjectPrefix("custom_prefix"),
 	)
 
 	assert.Nil(t, err)
@@ -112,6 +113,7 @@ func TestNewClientOptions(t *testing.T) {
 	assert.Equal(t, "pointer.class", c.pointerClass)
 	assert.Equal(t, []string{"Reserved", "Attributes"}, c.reservedAttrs)
 	assert.Equal(t, "BUCKET!", c.bucketName)
+	assert.Equal(t, "custom_prefix", c.objectPrefix)
 }
 
 func TestNewClientOptionsFailure(t *testing.T) {
@@ -220,6 +222,28 @@ func TestS3PointerUnmarshalInvalidLength(t *testing.T) {
 	var p s3Pointer
 	err := p.UnmarshalJSON(str)
 	assert.ErrorContains(t, err, "invalid pointer format, expected length 2, but received [3]")
+}
+
+func TestWithObjectPrefix(t *testing.T) {
+	invalidPrefixes := []string{"../test", "./test", "tes&", "te$t", "testñ", "te@st", "test=", "test;", "test:", "+test", "te st", "te,st", "test?"}
+	for _, prefix := range invalidPrefixes {
+		_, err := New(
+			nil,
+			nil,
+			WithObjectPrefix(prefix),
+		)
+		assert.Equal(t, err, ErrObjectPrefix)
+	}
+	validPrefixes := []string{"test0", "test", "TESt", "te!st", "te-st", "te_st", "te.st", "test*", "'test'", "(test)"}
+	for _, prefix := range validPrefixes {
+		c, err := New(
+			nil,
+			nil,
+			WithObjectPrefix(prefix),
+		)
+		assert.Nil(t, err)
+		assert.Equal(t, c.objectPrefix, prefix)
+	}
 }
 
 func TestSendMessage(t *testing.T) {
