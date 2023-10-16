@@ -268,7 +268,7 @@ func TestWithObjectPrefix(t *testing.T) {
 				if test.expectedErr == nil {
 					assert.Equal(t, c.objectPrefix, prefix)
 				} else {
-					assert.Equal(t, err, test.expectedErr)
+					assert.Equal(t, test.expectedErr, err)
 				}
 			}
 		})
