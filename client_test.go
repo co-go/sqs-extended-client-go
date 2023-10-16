@@ -246,23 +246,32 @@ func TestGenerateS3Key(t *testing.T) {
 
 func TestWithObjectPrefix(t *testing.T) {
 	invalidPrefixes := []string{"../test", "./test", "tes&", "te$t", "testñ", "te@st", "test=", "test;", "test:", "+test", "te st", "te,st", "test?", "te\\st", "test{", "test^", "test}", "te`st", "]test", "test\"", "test>", "test]", "test~", "test<", "te#st", "|test"}
-	for _, prefix := range invalidPrefixes {
-		_, err := New(
-			nil,
-			nil,
-			WithObjectPrefix(prefix),
-		)
-		assert.Equal(t, err, ErrObjectPrefix)
-	}
 	validPrefixes := []string{"test0", "test", "TESt", "te!st", "te-st", "te_st", "te.st", "test*", "'test'", "(test)"}
-	for _, prefix := range validPrefixes {
-		c, err := New(
-			nil,
-			nil,
-			WithObjectPrefix(prefix),
-		)
-		assert.Nil(t, err)
-		assert.Equal(t, c.objectPrefix, prefix)
+
+	tests := []struct {
+		name        string
+		prefixes    []string
+		expectedErr error
+	}{
+		{"invalid prefixes", invalidPrefixes, ErrObjectPrefix},
+		{"valid prefixes", validPrefixes, nil},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			for _, prefix := range test.prefixes {
+				c, err := New(
+					nil,
+					nil,
+					WithObjectPrefix(prefix),
+				)
+				if test.expectedErr == nil {
+					assert.Equal(t, c.objectPrefix, prefix)
+				} else {
+					assert.Equal(t, err, ErrObjectPrefix)
+				}
+			}
+		})
 	}
 }
 
