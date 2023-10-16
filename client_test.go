@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"io"
 	"strings"
 	"testing"
@@ -222,6 +223,25 @@ func TestS3PointerUnmarshalInvalidLength(t *testing.T) {
 	var p s3Pointer
 	err := p.UnmarshalJSON(str)
 	assert.ErrorContains(t, err, "invalid pointer format, expected length 2, but received [3]")
+}
+
+func TestGenerateS3Key(t *testing.T) {
+	uuid := uuid.New().String()
+	tests := []struct {
+		name          string
+		prefix        string
+		uuid          string
+		expectedS3Key string
+	}{
+		{"with prefix", "test", uuid, fmt.Sprintf("%s/%s", "test", uuid)},
+		{"without prefix", "", uuid, uuid},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			s3key := generateS3Key(test.prefix, test.uuid)
+			assert.Equal(t, test.expectedS3Key, s3key)
+		})
+	}
 }
 
 func TestWithObjectPrefix(t *testing.T) {

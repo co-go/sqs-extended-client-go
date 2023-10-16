@@ -201,6 +201,15 @@ func (p *s3Pointer) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf(`["%s",{"s3BucketName":"%s","s3Key":"%s"}]`, p.class, p.S3BucketName, p.S3Key)), nil
 }
 
+// generateS3Key returns the object key, attaches the prefix if it exists (prefix/filename)
+func generateS3Key(prefix string, filename string) string {
+	if prefix == "" {
+		return filename
+	}
+	// attach objectPrefix if exists
+	return fmt.Sprintf("%s/%s", prefix, filename)
+}
+
 // Extended SQS Client wrapper around [github.com/aws/aws-sdk-go-v2/service/sqs.Client.SendMessage].
 // If the provided message exceeds the message size threshold (defaults to 256KiB), then the message
 // will be uploaded to S3. Assuming a successful upload, the message will be altered by:
@@ -237,13 +246,8 @@ func (c *Client) SendMessage(ctx context.Context, params *sqs.SendMessageInput, 
 	input.QueueUrl = &queueURL
 
 	if c.alwaysThroughS3 || c.messageExceedsThreshold(input.MessageBody, input.MessageAttributes) {
-		// generate UUID filename
-		s3Key := uuid.New().String()
-
-		// attach objectPrefix if exists
-		if c.objectPrefix != "" {
-			s3Key = fmt.Sprintf("%s/%s", c.objectPrefix, s3Key)
-		}
+		// generate s3 object key
+		s3Key := generateS3Key(c.objectPrefix, uuid.New().String())
 
 		// upload large payload to S3
 		_, err := c.s3c.PutObject(ctx, &s3.PutObjectInput{
@@ -341,13 +345,8 @@ func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBa
 		copyEntries[i] = e
 
 		if c.alwaysThroughS3 || c.messageExceedsThreshold(e.MessageBody, e.MessageAttributes) {
-			// generate UUID filename
-			s3Key := uuid.New().String()
-
-			// attach objectPrefix if exists
-			if c.objectPrefix != "" {
-				s3Key = fmt.Sprintf("%s/%s", c.objectPrefix, s3Key)
-			}
+			// generate s3 object key
+			s3Key := generateS3Key(c.objectPrefix, uuid.New().String())
 
 			// upload large payload to S3
 			g.Go(func() error {
