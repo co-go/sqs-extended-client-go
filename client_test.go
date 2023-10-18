@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"io"
 	"strings"
 	"testing"
@@ -107,6 +108,7 @@ func TestNewClientOptions(t *testing.T) {
 		WithPointerClass("pointer.class"),
 		WithReservedAttributeNames([]string{"Reserved", "Attributes"}),
 		WithS3BucketName("BUCKET!"),
+		WithObjectPrefix("custom_prefix"),
 	)
 
 	assert.Nil(t, err)
@@ -117,6 +119,7 @@ func TestNewClientOptions(t *testing.T) {
 	assert.Equal(t, "pointer.class", c.pointerClass)
 	assert.Equal(t, []string{"Reserved", "Attributes"}, c.reservedAttrs)
 	assert.Equal(t, "BUCKET!", c.bucketName)
+	assert.Equal(t, "custom_prefix", c.objectPrefix)
 }
 
 func TestNewClientOptionsFailure(t *testing.T) {
@@ -225,6 +228,64 @@ func TestS3PointerUnmarshalInvalidLength(t *testing.T) {
 	var p s3Pointer
 	err := p.UnmarshalJSON(str)
 	assert.ErrorContains(t, err, "invalid pointer format, expected length 2, but received [3]")
+}
+
+func TestS3Key(t *testing.T) {
+	uuid := uuid.New().String()
+	tests := []struct {
+		name          string
+		prefix        string
+		filename      string
+		expectedS3Key string
+	}{
+		{"with prefix", "test", uuid, fmt.Sprintf("%s/%s", "test", uuid)},
+		{"without prefix", "", uuid, uuid},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var c *Client
+			var err error
+			if test.prefix != "" {
+				c, err = New(nil, nil, WithObjectPrefix(test.prefix))
+			} else {
+				c, err = New(nil, nil)
+			}
+			assert.Nil(t, err)
+			s3Key := c.s3Key(test.filename)
+			assert.Equal(t, test.expectedS3Key, s3Key)
+		})
+	}
+}
+
+func TestWithObjectPrefix(t *testing.T) {
+	invalidPrefixes := []string{"../test", "./test", "tes&", "te$t", "testñ", "te@st", "test=", "test;", "test:", "+test", "te st", "te,st", "test?", "te\\st", "test{", "test^", "test}", "te`st", "]test", "test\"", "test>", "test]", "test~", "test<", "te#st", "|test"}
+	validPrefixes := []string{"test0", "test", "TESt", "te!st", "te-st", "te_st", "te.st", "test*", "'test'", "(test)"}
+
+	tests := []struct {
+		name        string
+		prefixes    []string
+		expectedErr error
+	}{
+		{"invalid prefixes", invalidPrefixes, ErrObjectPrefix},
+		{"valid prefixes", validPrefixes, nil},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			for _, prefix := range test.prefixes {
+				c, err := New(
+					nil,
+					nil,
+					WithObjectPrefix(prefix),
+				)
+				if test.expectedErr == nil {
+					assert.Equal(t, c.objectPrefix, prefix)
+				} else {
+					assert.Equal(t, test.expectedErr, err)
+				}
+			}
+		})
+	}
 }
 
 func TestSendMessage(t *testing.T) {

@@ -3,6 +3,7 @@ package sqsextendedclient
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -28,9 +29,11 @@ const (
 )
 
 var (
-	jsonUnmarshal = json.Unmarshal
-	jsonMarshal   = json.Marshal
+	jsonUnmarshal   = json.Unmarshal
+	jsonMarshal     = json.Marshal
+	ErrObjectPrefix = errors.New("object prefix contains invalid characters")
 )
+var validObjectNameRegex = regexp.MustCompile("^[0-9a-zA-Z!_.*'()-]+$")
 
 type S3Client interface {
 	PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
@@ -49,6 +52,7 @@ type Client struct {
 	alwaysThroughS3      bool
 	pointerClass         string
 	reservedAttrs        []string
+	objectPrefix         string
 }
 
 type ClientOption func(*Client) error
@@ -129,6 +133,25 @@ func WithPointerClass(pointerClass string) ClientOption {
 		c.pointerClass = pointerClass
 		return nil
 	}
+}
+
+// WithObjectPrefix attaches a prefix to the object key (prefix/uuid)
+func WithObjectPrefix(prefix string) ClientOption {
+	return func(c *Client) error {
+		if !validObjectNameRegex.MatchString(prefix) {
+			return ErrObjectPrefix
+		}
+		c.objectPrefix = prefix
+		return nil
+	}
+}
+
+// s3Key returns a new string object key and prepends c.ObjectPrefix if it exists.
+func (c *Client) s3Key(filename string) string {
+	if c.objectPrefix != "" {
+		return fmt.Sprintf("%s/%s", c.objectPrefix, filename)
+	}
+	return filename
 }
 
 // messageExceedsThreshold determines if the size of the body and attributes exceeds the configured
@@ -222,8 +245,8 @@ func (c *Client) SendMessage(ctx context.Context, params *sqs.SendMessageInput, 
 	input.QueueUrl = &queueURL
 
 	if c.alwaysThroughS3 || c.messageExceedsThreshold(input.MessageBody, input.MessageAttributes) {
-		// generate UUID filename
-		s3Key := uuid.New().String()
+		// generate s3 object key
+		s3Key := c.s3Key(uuid.New().String())
 
 		// upload large payload to S3
 		_, err := c.s3c.PutObject(ctx, &s3.PutObjectInput{
@@ -321,8 +344,8 @@ func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBa
 		copyEntries[i] = e
 
 		if c.alwaysThroughS3 || c.messageExceedsThreshold(e.MessageBody, e.MessageAttributes) {
-			// generate UUID filename
-			s3Key := uuid.New().String()
+			// generate s3 object key
+			s3Key := c.s3Key(uuid.New().String())
 
 			// upload large payload to S3
 			g.Go(func() error {
