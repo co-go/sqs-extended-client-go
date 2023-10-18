@@ -1,4 +1,4 @@
-// Generated from service/sqs/v1.23.3
+// Generated from service/sqs/v1.24.7
 
 package sqsextendedclient
 
@@ -32,11 +32,18 @@ type SQSClient interface {
 	// Grant cross-account permissions to a role and a username (https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-customer-managed-policy-examples.html#grant-cross-account-permissions-to-role-and-user-name)
 	// in the Amazon SQS Developer Guide.
 	AddPermission(ctx context.Context, params *sqs.AddPermissionInput, optFns ...func(*sqs.Options)) (*sqs.AddPermissionOutput, error)
-	// Cancels a specified message movement task.
-	//   - A message movement can only be cancelled when the current status is
-	//     RUNNING.
-	//   - Cancelling a message movement task does not revert the messages that have
-	//     already been moved. It can only stop the messages that have not been moved yet.
+	// Cancels a specified message movement task. A message movement can only be
+	// cancelled when the current status is RUNNING. Cancelling a message movement task
+	// does not revert the messages that have already been moved. It can only stop the
+	// messages that have not been moved yet.
+	//   - This action is currently limited to supporting message redrive from
+	//     dead-letter queues (DLQs) (https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-dead-letter-queues.html)
+	//     only. In this context, the source queue is the dead-letter queue (DLQ), while
+	//     the destination queue can be the original source queue (from which the messages
+	//     were driven to the dead-letter-queue), or a custom destination queue.
+	//   - Currently, only standard queues are supported.
+	//   - Only one active message movement task is supported per queue at any given
+	//     time.
 	CancelMessageMoveTask(ctx context.Context, params *sqs.CancelMessageMoveTaskInput, optFns ...func(*sqs.Options)) (*sqs.CancelMessageMoveTaskOutput, error)
 	// Changes the visibility timeout of a specified message in a queue to a new
 	// value. The default visibility timeout for a message is 30 seconds. The minimum
@@ -178,6 +185,14 @@ type SQSClient interface {
 	ListDeadLetterSourceQueues(ctx context.Context, params *sqs.ListDeadLetterSourceQueuesInput, optFns ...func(*sqs.Options)) (*sqs.ListDeadLetterSourceQueuesOutput, error)
 	// Gets the most recent message movement tasks (up to 10) under a specific source
 	// queue.
+	//   - This action is currently limited to supporting message redrive from
+	//     dead-letter queues (DLQs) (https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-dead-letter-queues.html)
+	//     only. In this context, the source queue is the dead-letter queue (DLQ), while
+	//     the destination queue can be the original source queue (from which the messages
+	//     were driven to the dead-letter-queue), or a custom destination queue.
+	//   - Currently, only standard queues are supported.
+	//   - Only one active message movement task is supported per queue at any given
+	//     time.
 	ListMessageMoveTasks(ctx context.Context, params *sqs.ListMessageMoveTasksInput, optFns ...func(*sqs.Options)) (*sqs.ListMessageMoveTasksOutput, error)
 	// List all cost allocation tags added to the specified Amazon SQS queue. For an
 	// overview, see Tagging Your Amazon SQS Queues (https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-queue-tags.html)
@@ -199,13 +214,13 @@ type SQSClient interface {
 	// information, see Grant cross-account permissions to a role and a username (https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-customer-managed-policy-examples.html#grant-cross-account-permissions-to-role-and-user-name)
 	// in the Amazon SQS Developer Guide.
 	ListQueues(ctx context.Context, params *sqs.ListQueuesInput, optFns ...func(*sqs.Options)) (*sqs.ListQueuesOutput, error)
-	// Deletes the messages in a queue specified by the QueueURL parameter. When you
-	// use the PurgeQueue action, you can't retrieve any messages deleted from a
-	// queue. The message deletion process takes up to 60 seconds. We recommend waiting
-	// for 60 seconds regardless of your queue's size. Messages sent to the queue
-	// before you call PurgeQueue might be received but are deleted within the next
-	// minute. Messages sent to the queue after you call PurgeQueue might be deleted
-	// while the queue is being purged.
+	// Deletes available messages in a queue (including in-flight messages) specified
+	// by the QueueURL parameter. When you use the PurgeQueue action, you can't
+	// retrieve any messages deleted from a queue. The message deletion process takes
+	// up to 60 seconds. We recommend waiting for 60 seconds regardless of your queue's
+	// size. Messages sent to the queue before you call PurgeQueue might be received
+	// but are deleted within the next minute. Messages sent to the queue after you
+	// call PurgeQueue might be deleted while the queue is being purged.
 	PurgeQueue(ctx context.Context, params *sqs.PurgeQueueInput, optFns ...func(*sqs.Options)) (*sqs.PurgeQueueOutput, error)
 	// Retrieves one or more messages (up to 10), from the specified queue. Using the
 	// WaitTimeSeconds parameter enables long-poll support. For more information, see
@@ -292,12 +307,16 @@ type SQSClient interface {
 	SetQueueAttributes(ctx context.Context, params *sqs.SetQueueAttributesInput, optFns ...func(*sqs.Options)) (*sqs.SetQueueAttributesOutput, error)
 	// Starts an asynchronous task to move messages from a specified source queue to a
 	// specified destination queue.
-	//   - This action is currently limited to supporting message redrive from
-	//     dead-letter queues (DLQs) only. In this context, the source queue is the
-	//     dead-letter queue (DLQ), while the destination queue can be the original source
-	//     queue (from which the messages were driven to the dead-letter-queue), or a
-	//     custom destination queue.
-	//   - Currently, only standard queues are supported.
+	//   - This action is currently limited to supporting message redrive from queues
+	//     that are configured as dead-letter queues (DLQs) (https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-dead-letter-queues.html)
+	//     of other Amazon SQS queues only. Non-SQS queue sources of dead-letter queues,
+	//     such as Lambda or Amazon SNS topics, are currently not supported.
+	//   - In dead-letter queues redrive context, the StartMessageMoveTask the source
+	//     queue is the DLQ, while the destination queue can be the original source queue
+	//     (from which the messages were driven to the dead-letter-queue), or a custom
+	//     destination queue.
+	//   - Currently, only standard queues support redrive. FIFO queues don't support
+	//     redrive.
 	//   - Only one active message movement task is supported per queue at any given
 	//     time.
 	StartMessageMoveTask(ctx context.Context, params *sqs.StartMessageMoveTaskInput, optFns ...func(*sqs.Options)) (*sqs.StartMessageMoveTaskOutput, error)
