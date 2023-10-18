@@ -51,6 +51,11 @@ func (m *mockSQSClient) DeleteMessageBatch(ctx context.Context, params *sqs.Dele
 	return args.Get(0).(*sqs.DeleteMessageBatchOutput), args.Error(1)
 }
 
+func (m *mockSQSClient) ChangeMessageVisibility(ctx context.Context, params *sqs.ChangeMessageVisibilityInput, optFns ...func(*sqs.Options)) (*sqs.ChangeMessageVisibilityOutput, error) {
+	args := m.Called(ctx, params, optFns)
+	return args.Get(0).(*sqs.ChangeMessageVisibilityOutput), args.Error(1)
+}
+
 type mockS3Client struct {
 	*mock.Mock
 }
@@ -966,4 +971,22 @@ func TestDeleteMessageBatchSQSError(t *testing.T) {
 	})
 
 	assert.Error(t, err)
+}
+
+func TestClient_ChangeMessageVisibility(t *testing.T) {
+	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
+	matcher := func(params *sqs.ChangeMessageVisibilityInput) bool {
+		return *params.ReceiptHandle == "abcdefg"
+	}
+	msqsc.On("ChangeMessageVisibility", mock.Anything, mock.MatchedBy(matcher), mock.Anything).Return(&sqs.ChangeMessageVisibilityOutput{}, nil)
+
+	c, err := New(msqsc, nil)
+	assert.Nil(t, err)
+
+	_, err = c.ChangeMessageVisibility(context.Background(), &sqs.ChangeMessageVisibilityInput{
+		QueueUrl:          aws.String("test_queue"),
+		ReceiptHandle:     aws.String("-..s3BucketName..-some-bucket-..s3BucketName..--..s3Key..-some-key-..s3Key..-abcdefg"),
+		VisibilityTimeout: 10,
+	})
+	assert.NoError(t, err)
 }
