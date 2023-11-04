@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.23.3
 	github.com/google/uuid v1.4.0
 	github.com/stretchr/testify v1.8.4
-	golang.org/x/sync v0.3.0
+	golang.org/x/sync v0.4.0
 )
 
 require (
