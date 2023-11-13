@@ -354,7 +354,7 @@ func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBa
 
 	// if the size does not exceed the message size threshold
 	// defined by the implementer, and does not exceed AWS max
-	// message size of 256Kib,  and alwaysThroughS3 is false
+	// batch message size of 256Kib,  and alwaysThroughS3 is false
 	// then send without s3 functionality
 	if batchMsgSize < c.messageSizeThreshold &&
 		batchMsgSize < maxMsgSizeInBytes &&
