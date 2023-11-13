@@ -357,6 +357,7 @@ func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBa
 		return c.SQSClient.SendMessageBatch(ctx, &input, optFns...)
 	}
 
+	// else send with s3 functionality
 	for i, e := range input.Entries {
 		i, e := i, e
 
