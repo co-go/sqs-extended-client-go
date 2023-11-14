@@ -47,19 +47,21 @@ type S3Client interface {
 // functionality for retrieving, sending and deleting messages.
 type Client struct {
 	SQSClient
-	s3c                  S3Client
-	bucketName           string
-	messageSizeThreshold int64
-	alwaysThroughS3      bool
-	pointerClass         string
-	reservedAttrs        []string
-	objectPrefix         string
+	s3c                       S3Client
+	bucketName                string
+	messageSizeThreshold      int64
+	batchMessageSizeThreshold int64
+	alwaysThroughS3           bool
+	pointerClass              string
+	reservedAttrs             []string
+	objectPrefix              string
 }
 
 type ClientOption func(*Client) error
 
 // New returns a newly created [*Client] with defaults:
 //   - MessageSizeThreshold: 262144 (256 KiB)
+//   - BatchMessageSizeThreshold: 262144 (256 KiB)
 //   - S3PointerClass: "software.amazon.payloadoffloading.PayloadS3Pointer"
 //   - ReservedAttributeName: "ExtendedPayloadSize"
 //
@@ -71,11 +73,12 @@ func New(
 	optFns ...ClientOption,
 ) (*Client, error) {
 	c := Client{
-		SQSClient:            sqsc,
-		s3c:                  s3c,
-		messageSizeThreshold: maxMsgSizeInBytes,
-		pointerClass:         "software.amazon.payloadoffloading.PayloadS3Pointer",
-		reservedAttrs:        []string{"ExtendedPayloadSize", LegacyReservedAttributeName},
+		SQSClient:                 sqsc,
+		s3c:                       s3c,
+		messageSizeThreshold:      maxMsgSizeInBytes,
+		batchMessageSizeThreshold: maxMsgSizeInBytes,
+		pointerClass:              "software.amazon.payloadoffloading.PayloadS3Pointer",
+		reservedAttrs:             []string{"ExtendedPayloadSize", LegacyReservedAttributeName},
 	}
 
 	// apply optFns to the base client
@@ -103,6 +106,15 @@ func WithS3BucketName(bucketName string) ClientOption {
 func WithMessageSizeThreshold(size int) ClientOption {
 	return func(c *Client) error {
 		c.messageSizeThreshold = int64(size)
+		return nil
+	}
+}
+
+// Set the BatchMessageSizeThreshold to some other value (in bytes). By default this is 262144 (256
+// KiB).
+func WithBatchMessageSizeThreshold(size int) ClientOption {
+	return func(c *Client) error {
+		c.batchMessageSizeThreshold = int64(size)
 		return nil
 	}
 }
@@ -163,7 +175,7 @@ func (c *Client) messageSize(body *string, attributes map[string]types.MessageAt
 // messageExceedsThreshold determines if the size of the body and attributes exceeds the configured
 // message size threshold
 func (c *Client) messageExceedsThreshold(body *string, attributes map[string]types.MessageAttributeValue) bool {
-	return c.getMessageSize(body, attributes) > c.messageSizeThreshold
+	return c.messageSize(body, attributes) > c.messageSizeThreshold
 }
 
 // attributeSize will return the size of all provided attributes and their values
@@ -334,8 +346,6 @@ func (c *Client) SendMessage(ctx context.Context, params *sqs.SendMessageInput, 
 // parameter for an entry, Amazon SQS uses the default value for the queue.
 func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBatchInput, optFns ...func(*sqs.Options)) (*sqs.SendMessageBatchOutput, error) {
 	input := *params
-	copyEntries := make([]types.SendMessageBatchRequestEntry, len(input.Entries))
-	g := new(errgroup.Group)
 
 	// determine bucket name, either from client (default) or from provided SQS URL
 	queueURL, s3Bucket, found := strings.Cut(*params.QueueUrl, "|")
@@ -346,23 +356,46 @@ func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBa
 	input.QueueUrl = &queueURL
 
 	// calculate the size of the batch of messages
-	var batchMsgSize int64
+	var batchSize int64
 	for _, e := range input.Entries {
-		batchMsgSize += c.getMessageSize(e.MessageBody, e.MessageAttributes)
+		batchSize += c.messageSize(e.MessageBody, e.MessageAttributes)
 	}
 
-	// if the size does not exceed the message size threshold
-	// defined by the implementer, and does not exceed AWS max
-	// batch message size of 256Kib,  and alwaysThroughS3 is false
-	// then send without s3 functionality
-	if batchMsgSize < c.messageSizeThreshold &&
-		batchMsgSize < maxMsgSizeInBytes &&
-		!c.alwaysThroughS3 {
+	// if the batch size exceeds the batch message size threshold
+	// or max message size, or alwaysThroughS3 is set to true
+	// then send with s3 functionality
+	if batchSize > c.batchMessageSizeThreshold ||
+		batchSize > maxMsgSizeInBytes ||
+		c.alwaysThroughS3 {
+		entryCopies, err := c.storeEntryMessagesToS3(ctx, s3Bucket, input.Entries...)
+		if err != nil {
+			return nil, err
+		}
+		input.Entries = entryCopies
+
 		return c.SQSClient.SendMessageBatch(ctx, &input, optFns...)
 	}
 
-	// else send with s3 functionality
-	for i, e := range input.Entries {
+	// if the size of an individual message is greater
+	// than the message size threshold then send that
+	// message with s3 functionality
+	for idx, e := range input.Entries {
+		if c.messageSize(e.MessageBody, e.MessageAttributes) > c.messageSizeThreshold {
+			entryCopies, err := c.storeEntryMessagesToS3(ctx, s3Bucket, e)
+			if err != nil {
+				return nil, err
+			}
+			input.Entries[idx] = entryCopies[0]
+		}
+	}
+
+	return c.SQSClient.SendMessageBatch(ctx, &input, optFns...)
+}
+
+func (c *Client) storeEntryMessagesToS3(ctx context.Context, s3Bucket string, entries ...types.SendMessageBatchRequestEntry) ([]types.SendMessageBatchRequestEntry, error) {
+	copyEntries := make([]types.SendMessageBatchRequestEntry, len(entries))
+	g := new(errgroup.Group)
+	for i, e := range entries {
 		i, e := i, e
 
 		// always copy the entry, regardless of size
@@ -418,10 +451,7 @@ func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBa
 		return nil, err
 	}
 
-	// override entries with our copied ones
-	input.Entries = copyEntries
-
-	return c.SQSClient.SendMessageBatch(ctx, &input, optFns...)
+	return copyEntries, nil
 }
 
 // ReceiveMessage is a wrapper for the
