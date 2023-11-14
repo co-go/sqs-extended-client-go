@@ -156,7 +156,7 @@ func (c *Client) s3Key(filename string) string {
 }
 
 // getMessageSize returns the size of the body and attributes of a message
-func (c *Client) getMessageSize(body *string, attributes map[string]types.MessageAttributeValue) int64 {
+func (c *Client) messageSize(body *string, attributes map[string]types.MessageAttributeValue) int64 {
 	return int64(len(*body)) + c.attributeSize(attributes)
 }
 
