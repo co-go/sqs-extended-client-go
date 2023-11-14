@@ -450,7 +450,7 @@ func TestSendMessageBatch(t *testing.T) {
 	assert.Nil(t, err)
 }
 
-func TestSendMessageBatchBelowSizeThreshold(t *testing.T) {
+func TestSendMessageBatchMessageSizesBelowThreshold(t *testing.T) {
 	ms3c := &mockS3Client{&mock.Mock{}}
 	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
 	msqsc.On(
@@ -500,7 +500,7 @@ func TestSendMessageBatchBelowSizeThreshold(t *testing.T) {
 	assert.Nil(t, err)
 }
 
-func TestSendMessageBatchMessageAboveMessageThreshold(t *testing.T) {
+func TestSendMessageBatchMessageSizeAboveThreshold(t *testing.T) {
 	key1 := new(string)
 	ms3c := &mockS3Client{&mock.Mock{}}
 	ms3c.On(
@@ -572,7 +572,7 @@ func TestSendMessageBatchMessageAboveMessageThreshold(t *testing.T) {
 	assert.Nil(t, err)
 }
 
-func TestSendMessageBatchAboveMessageThreshold(t *testing.T) {
+func TestSendMessageBatchSizeAboveThreshold(t *testing.T) {
 	key1, key2 := new(string), new(string)
 	ms3c := &mockS3Client{&mock.Mock{}}
 	ms3c.On(
