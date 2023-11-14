@@ -347,8 +347,7 @@ func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBa
 
 	// calculate the size of the batch of messages
 	var batchMsgSize int64
-	for idx := range input.Entries {
-		e := input.Entries[idx]
+	for _, e := range input.Entries {
 		batchMsgSize += c.getMessageSize(e.MessageBody, e.MessageAttributes)
 	}
 
