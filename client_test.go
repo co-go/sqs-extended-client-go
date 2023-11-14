@@ -500,6 +500,78 @@ func TestSendMessageBatchBelowSizeThreshold(t *testing.T) {
 	assert.Nil(t, err)
 }
 
+func TestSendMessageBatchMessageAboveMessageThreshold(t *testing.T) {
+	key1 := new(string)
+	ms3c := &mockS3Client{&mock.Mock{}}
+	ms3c.On(
+		"PutObject",
+		mock.Anything,
+		mock.MatchedBy(func(params *s3.PutObjectInput) bool {
+			assert.Equal(t, "override_bucket", *params.Bucket)
+
+			asBytes, err := io.ReadAll(params.Body)
+			assert.Nil(t, err)
+
+			switch string(asBytes) {
+			case "testing body 1 with a little larger payload":
+				key1 = params.Key
+				return true
+			case "testing body 2":
+				return true
+			}
+
+			return false
+		}),
+		mock.Anything).
+		Return(&s3.PutObjectOutput{}, nil)
+
+	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
+	msqsc.On(
+		"SendMessageBatch",
+		mock.Anything,
+		mock.MatchedBy(func(params *sqs.SendMessageBatchInput) bool {
+			assert.Equal(t, "testing_url", *params.QueueUrl)
+			assert.Len(t, params.Entries, 2)
+			assert.Equal(t, "entry_1", *params.Entries[0].Id)
+			assert.Equal(t, "entry_2", *params.Entries[1].Id)
+			assert.Equal(t, getDefaultS3Pointer("override_bucket", *key1), *params.Entries[0].MessageBody)
+			assert.Equal(t, "testing body 2", *params.Entries[1].MessageBody)
+			assert.Equal(t, "hi", *params.Entries[0].MessageAttributes["testing_attribute"].StringValue)
+			assert.Equal(t, "hello", *params.Entries[1].MessageAttributes["testing_attribute"].StringValue)
+			assert.Equal(t, "43", *params.Entries[0].MessageAttributes["ExtendedPayloadSize"].StringValue)
+			assert.Nil(t, params.Entries[1].MessageAttributes["ExtendedPayloadSize"].StringValue)
+			return true
+		}),
+		mock.Anything).
+		Return(&sqs.SendMessageBatchOutput{}, nil)
+
+	c, err := New(msqsc, ms3c, WithMessageSizeThreshold(40), WithS3BucketName("test_bucket"))
+	assert.Nil(t, err)
+
+	_, err = c.SendMessageBatch(context.Background(), &sqs.SendMessageBatchInput{
+		Entries: []types.SendMessageBatchRequestEntry{
+			{
+				Id:          aws.String("entry_1"),
+				MessageBody: aws.String("testing body 1 with a little larger payload"),
+				MessageAttributes: map[string]types.MessageAttributeValue{
+					"testing_attribute": {StringValue: aws.String("hi")},
+				},
+			},
+			{
+				Id:          aws.String("entry_2"),
+				MessageBody: aws.String("testing body 2"),
+				MessageAttributes: map[string]types.MessageAttributeValue{
+					"testing_attribute": {StringValue: aws.String("hello")},
+				},
+			},
+		},
+		QueueUrl: aws.String("testing_url|override_bucket"),
+	})
+
+	assert.Len(t, ms3c.Calls, 1)
+	assert.Nil(t, err)
+}
+
 func TestSendMessageBatchAboveMessageThreshold(t *testing.T) {
 	key1, key2 := new(string), new(string)
 	ms3c := &mockS3Client{&mock.Mock{}}
@@ -513,7 +585,7 @@ func TestSendMessageBatchAboveMessageThreshold(t *testing.T) {
 			assert.Nil(t, err)
 
 			switch string(asBytes) {
-			case "testing body 1":
+			case "testing body 1 with a little larger payload":
 				key1 = params.Key
 				return true
 			case "testing body 2":
@@ -539,21 +611,21 @@ func TestSendMessageBatchAboveMessageThreshold(t *testing.T) {
 			assert.Equal(t, getDefaultS3Pointer("override_bucket", *key2), *params.Entries[1].MessageBody)
 			assert.Equal(t, "hi", *params.Entries[0].MessageAttributes["testing_attribute"].StringValue)
 			assert.Equal(t, "hello", *params.Entries[1].MessageAttributes["testing_attribute"].StringValue)
-			assert.Equal(t, "14", *params.Entries[0].MessageAttributes["ExtendedPayloadSize"].StringValue)
+			assert.Equal(t, "43", *params.Entries[0].MessageAttributes["ExtendedPayloadSize"].StringValue)
 			assert.Equal(t, "14", *params.Entries[1].MessageAttributes["ExtendedPayloadSize"].StringValue)
 			return true
 		}),
 		mock.Anything).
 		Return(&sqs.SendMessageBatchOutput{}, nil)
 
-	c, err := New(msqsc, ms3c, WithMessageSizeThreshold(1), WithS3BucketName("test_bucket"))
+	c, err := New(msqsc, ms3c, WithBatchMessageSizeThreshold(1), WithS3BucketName("test_bucket"))
 	assert.Nil(t, err)
 
 	_, err = c.SendMessageBatch(context.Background(), &sqs.SendMessageBatchInput{
 		Entries: []types.SendMessageBatchRequestEntry{
 			{
 				Id:          aws.String("entry_1"),
-				MessageBody: aws.String("testing body 1"),
+				MessageBody: aws.String("testing body 1 with a little larger payload"),
 				MessageAttributes: map[string]types.MessageAttributeValue{
 					"testing_attribute": {StringValue: aws.String("hi")},
 				},

@@ -380,7 +380,8 @@ func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBa
 	// than the message size threshold then send that
 	// message with s3 functionality
 	for idx, e := range input.Entries {
-		if c.messageSize(e.MessageBody, e.MessageAttributes) > c.messageSizeThreshold {
+		sz := c.messageSize(e.MessageBody, e.MessageAttributes)
+		if sz > c.messageSizeThreshold {
 			entryCopies, err := c.storeEntryMessagesToS3(ctx, s3Bucket, e)
 			if err != nil {
 				return nil, err
