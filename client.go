@@ -73,7 +73,7 @@ func New(
 	c := Client{
 		SQSClient:            sqsc,
 		s3c:                  s3c,
-		messageSizeThreshold: maxMsgSizeInBytes, // 256 KiB
+		messageSizeThreshold: maxMsgSizeInBytes,
 		pointerClass:         "software.amazon.payloadoffloading.PayloadS3Pointer",
 		reservedAttrs:        []string{"ExtendedPayloadSize", LegacyReservedAttributeName},
 	}
