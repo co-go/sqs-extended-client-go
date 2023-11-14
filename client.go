@@ -26,7 +26,7 @@ const (
 	maxAllowedAttributes        = 10 - 1 // 1 is reserved for the extended client reserved attribute
 	LegacyReservedAttributeName = "SQSLargePayloadSize"
 	LegacyS3PointerClass        = "com.amazon.sqs.javamessaging.MessageS3Pointer"
-	maxMsgSizeInBytes           = 262144
+	maxMsgSizeInBytes           = 262144 // 256 KiB
 )
 
 var (
