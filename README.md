@@ -140,7 +140,8 @@ func main() {
 }
 ```
 
-> #### If you plan on processing extended events within a Lambda function:
+> [!NOTE]
+> #### If you plan on processing extended events within a Lambda function
 >
 > When processing SQS events in a Lambda function, if the invocation doesn’t return an error (indicating success), AWS will delete the SQS messages from the queue to prevent re-processing. This is a good thing! However, due to the special way extended messages are deleted, if AWS deletes an extended message that has a linked payload in S3, **AWS will NOT delete the S3 payload**.
 >

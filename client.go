@@ -26,14 +26,15 @@ const (
 	maxAllowedAttributes        = 10 - 1 // 1 is reserved for the extended client reserved attribute
 	LegacyReservedAttributeName = "SQSLargePayloadSize"
 	LegacyS3PointerClass        = "com.amazon.sqs.javamessaging.MessageS3Pointer"
+	maxMsgSizeInBytes           = 262144 // 256 KiB
 )
 
 var (
-	jsonUnmarshal   = json.Unmarshal
-	jsonMarshal     = json.Marshal
-	ErrObjectPrefix = errors.New("object prefix contains invalid characters")
+	jsonUnmarshal        = json.Unmarshal
+	jsonMarshal          = json.Marshal
+	validObjectNameRegex = regexp.MustCompile("^[0-9a-zA-Z!_.*'()-]+$")
+	ErrObjectPrefix      = errors.New("object prefix contains invalid characters")
 )
-var validObjectNameRegex = regexp.MustCompile("^[0-9a-zA-Z!_.*'()-]+$")
 
 type S3Client interface {
 	PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
@@ -46,19 +47,21 @@ type S3Client interface {
 // functionality for retrieving, sending and deleting messages.
 type Client struct {
 	SQSClient
-	s3c                  S3Client
-	bucketName           string
-	messageSizeThreshold int64
-	alwaysThroughS3      bool
-	pointerClass         string
-	reservedAttrs        []string
-	objectPrefix         string
+	s3c                       S3Client
+	bucketName                string
+	messageSizeThreshold      int64
+	batchMessageSizeThreshold int64
+	alwaysThroughS3           bool
+	pointerClass              string
+	reservedAttrs             []string
+	objectPrefix              string
 }
 
 type ClientOption func(*Client) error
 
 // New returns a newly created [*Client] with defaults:
 //   - MessageSizeThreshold: 262144 (256 KiB)
+//   - BatchMessageSizeThreshold: 262144 (256 KiB)
 //   - S3PointerClass: "software.amazon.payloadoffloading.PayloadS3Pointer"
 //   - ReservedAttributeName: "ExtendedPayloadSize"
 //
@@ -70,11 +73,12 @@ func New(
 	optFns ...ClientOption,
 ) (*Client, error) {
 	c := Client{
-		SQSClient:            sqsc,
-		s3c:                  s3c,
-		messageSizeThreshold: 262144, // 256 KiB
-		pointerClass:         "software.amazon.payloadoffloading.PayloadS3Pointer",
-		reservedAttrs:        []string{"ExtendedPayloadSize", LegacyReservedAttributeName},
+		SQSClient:                 sqsc,
+		s3c:                       s3c,
+		messageSizeThreshold:      maxMsgSizeInBytes,
+		batchMessageSizeThreshold: maxMsgSizeInBytes,
+		pointerClass:              "software.amazon.payloadoffloading.PayloadS3Pointer",
+		reservedAttrs:             []string{"ExtendedPayloadSize", LegacyReservedAttributeName},
 	}
 
 	// apply optFns to the base client
@@ -102,6 +106,15 @@ func WithS3BucketName(bucketName string) ClientOption {
 func WithMessageSizeThreshold(size int) ClientOption {
 	return func(c *Client) error {
 		c.messageSizeThreshold = int64(size)
+		return nil
+	}
+}
+
+// Set the BatchMessageSizeThreshold to some other value (in bytes). By default this is 262144 (256
+// KiB).
+func WithBatchMessageSizeThreshold(size int) ClientOption {
+	return func(c *Client) error {
+		c.batchMessageSizeThreshold = int64(size)
 		return nil
 	}
 }
@@ -154,10 +167,15 @@ func (c *Client) s3Key(filename string) string {
 	return filename
 }
 
+// getMessageSize returns the size of the body and attributes of a message
+func (c *Client) messageSize(body *string, attributes map[string]types.MessageAttributeValue) int64 {
+	return int64(len(*body)) + c.attributeSize(attributes)
+}
+
 // messageExceedsThreshold determines if the size of the body and attributes exceeds the configured
 // message size threshold
 func (c *Client) messageExceedsThreshold(body *string, attributes map[string]types.MessageAttributeValue) bool {
-	return int64(len(*body))+c.attributeSize(attributes) > c.messageSizeThreshold
+	return c.messageSize(body, attributes) > c.messageSizeThreshold
 }
 
 // attributeSize will return the size of all provided attributes and their values
@@ -291,14 +309,19 @@ func (c *Client) SendMessage(ctx context.Context, params *sqs.SendMessageInput, 
 }
 
 // Extended SQS Client wrapper around
-// [github.com/aws/aws-sdk-go-v2/service/sqs.Client.SendMessageBatch]. For each provided message in
-// the batch, if the message exceeds the message size threshold (defaults to 256KiB), then the
-// message will be uploaded to S3. Assuming a successful upload, the message will be altered by:
+// [github.com/aws/aws-sdk-go-v2/service/sqs.Client.SendMessageBatch]. When preparing the messages
+// for transport, each message will be iterated through and checks performed:
+//
+//  1. If the size of the message exceeds the messageSizeThreshold, it will be uploaded to S3
+//  2. If the size of the message when added to the size of all previous messages exceeds the
+//     batchMessageSizeThreshold, then that message with be uploaded to S3.
+//
+// For each message that is successfully uploaded to S3, the messages will be altered by:
 //
 //  1. Adding a custom attribute under the configured reserved attribute name that contains the size
 //     of the large payload.
 //  2. Body of the original message overridden with a S3 Pointer to the newly created S3 location
-//     that holds the entirety of the message
+//     that holds the entirety of the message.
 //
 // After all applicable messages are uploaded to S3, then the SQS native SendMessageBatch call is
 // invoked.
@@ -337,13 +360,21 @@ func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBa
 
 	input.QueueUrl = &queueURL
 
+	batchSizeBytes := int64(0)
 	for i, e := range input.Entries {
 		i, e := i, e
 
 		// always copy the entry, regardless of size
 		copyEntries[i] = e
 
-		if c.alwaysThroughS3 || c.messageExceedsThreshold(e.MessageBody, e.MessageAttributes) {
+		msgSize := c.messageSize(e.MessageBody, e.MessageAttributes)
+
+		// check if we always send through s3, or if the message size exceeds the threshold, or if
+		// sending the message would cause the batch itself to overflow
+		if c.alwaysThroughS3 ||
+			msgSize > c.messageSizeThreshold ||
+			batchSizeBytes+msgSize > c.batchMessageSizeThreshold {
+
 			// generate s3 object key
 			s3Key := c.s3Key(uuid.New().String())
 
@@ -388,7 +419,11 @@ func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBa
 			// override attributes and body in the original message
 			copyEntries[i].MessageAttributes = updatedAttributes
 			copyEntries[i].MessageBody = aws.String(string(asBytes))
+
+			msgSize = c.messageSize(copyEntries[i].MessageBody, copyEntries[i].MessageAttributes)
 		}
+
+		batchSizeBytes += msgSize
 	}
 
 	if err := g.Wait(); err != nil {
