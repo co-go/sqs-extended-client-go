@@ -30,11 +30,11 @@ const (
 )
 
 var (
-	jsonUnmarshal   = json.Unmarshal
-	jsonMarshal     = json.Marshal
-	ErrObjectPrefix = errors.New("object prefix contains invalid characters")
+	jsonUnmarshal        = json.Unmarshal
+	jsonMarshal          = json.Marshal
+	validObjectNameRegex = regexp.MustCompile("^[0-9a-zA-Z!_.*'()-]+$")
+	ErrObjectPrefix      = errors.New("object prefix contains invalid characters")
 )
-var validObjectNameRegex = regexp.MustCompile("^[0-9a-zA-Z!_.*'()-]+$")
 
 type S3Client interface {
 	PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
@@ -309,16 +309,19 @@ func (c *Client) SendMessage(ctx context.Context, params *sqs.SendMessageInput, 
 }
 
 // Extended SQS Client wrapper around
-// [github.com/aws/aws-sdk-go-v2/service/sqs.Client.SendMessageBatch]. "The maximum allowed
-// individual message size and the maximum total payload size (the sum of the individual lengths
-// of all of the batched messages) are both 256 KiB (262,144 bytes)". If oversized batch message payload
-// then all messages in batch will be uploaded to S3. Assuming a successful upload, the messages will
-// be altered by:
+// [github.com/aws/aws-sdk-go-v2/service/sqs.Client.SendMessageBatch]. When preparing the messages
+// for transport, each message will be iterated through and checks performed:
+//
+//  1. If the size of the message exceeds the messageSizeThreshold, it will be uploaded to S3
+//  2. If the size of the message when added to the size of all previous messages exceeds the
+//     batchMessageSizeThreshold, then that message with be uploaded to S3.
+//
+// For each message that is successfully uploaded to S3, the messages will be altered by:
 //
 //  1. Adding a custom attribute under the configured reserved attribute name that contains the size
 //     of the large payload.
 //  2. Body of the original message overridden with a S3 Pointer to the newly created S3 location
-//     that holds the entirety of the message
+//     that holds the entirety of the message.
 //
 // After all applicable messages are uploaded to S3, then the SQS native SendMessageBatch call is
 // invoked.
@@ -346,6 +349,8 @@ func (c *Client) SendMessage(ctx context.Context, params *sqs.SendMessageInput, 
 // parameter for an entry, Amazon SQS uses the default value for the queue.
 func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBatchInput, optFns ...func(*sqs.Options)) (*sqs.SendMessageBatchOutput, error) {
 	input := *params
+	copyEntries := make([]types.SendMessageBatchRequestEntry, len(input.Entries))
+	g := new(errgroup.Group)
 
 	// determine bucket name, either from client (default) or from provided SQS URL
 	queueURL, s3Bucket, found := strings.Cut(*params.QueueUrl, "|")
@@ -355,104 +360,80 @@ func (c *Client) SendMessageBatch(ctx context.Context, params *sqs.SendMessageBa
 
 	input.QueueUrl = &queueURL
 
-	// calculate the size of the batch of messages
-	var batchSize int64
-	for _, e := range input.Entries {
-		batchSize += c.messageSize(e.MessageBody, e.MessageAttributes)
-	}
-
-	// if the batch size exceeds the batch message size threshold
-	// or max message size, or alwaysThroughS3 is set to true
-	// then send with s3 functionality
-	if batchSize > c.batchMessageSizeThreshold ||
-		batchSize > maxMsgSizeInBytes ||
-		c.alwaysThroughS3 {
-		entryCopies, err := c.storeEntryMessagesToS3(ctx, s3Bucket, input.Entries...)
-		if err != nil {
-			return nil, err
-		}
-		input.Entries = entryCopies
-
-		return c.SQSClient.SendMessageBatch(ctx, &input, optFns...)
-	}
-
-	// if the size of an individual message is greater
-	// than the message size threshold then send that
-	// message with s3 functionality
-	for idx, e := range input.Entries {
-		sz := c.messageSize(e.MessageBody, e.MessageAttributes)
-		if sz > c.messageSizeThreshold {
-			entryCopies, err := c.storeEntryMessagesToS3(ctx, s3Bucket, e)
-			if err != nil {
-				return nil, err
-			}
-			input.Entries[idx] = entryCopies[0]
-		}
-	}
-
-	return c.SQSClient.SendMessageBatch(ctx, &input, optFns...)
-}
-
-func (c *Client) storeEntryMessagesToS3(ctx context.Context, s3Bucket string, entries ...types.SendMessageBatchRequestEntry) ([]types.SendMessageBatchRequestEntry, error) {
-	copyEntries := make([]types.SendMessageBatchRequestEntry, len(entries))
-	g := new(errgroup.Group)
-	for i, e := range entries {
+	batchSizeBytes := int64(0)
+	for i, e := range input.Entries {
 		i, e := i, e
 
 		// always copy the entry, regardless of size
 		copyEntries[i] = e
 
-		// generate s3 object key
-		s3Key := c.s3Key(uuid.New().String())
+		msgSize := c.messageSize(e.MessageBody, e.MessageAttributes)
 
-		// upload large payload to S3
-		g.Go(func() error {
-			_, err := c.s3c.PutObject(ctx, &s3.PutObjectInput{
-				Bucket: &s3Bucket,
-				Key:    aws.String(s3Key),
-				Body:   strings.NewReader(*e.MessageBody),
+		// check if we always send through s3, or if the message size exceeds the threshold, or if
+		// sending the message would cause the batch itself to overflow
+		if c.alwaysThroughS3 ||
+			msgSize > c.messageSizeThreshold ||
+			batchSizeBytes+msgSize > c.batchMessageSizeThreshold {
+
+			// generate s3 object key
+			s3Key := c.s3Key(uuid.New().String())
+
+			// upload large payload to S3
+			g.Go(func() error {
+				_, err := c.s3c.PutObject(ctx, &s3.PutObjectInput{
+					Bucket: &s3Bucket,
+					Key:    aws.String(s3Key),
+					Body:   strings.NewReader(*e.MessageBody),
+				})
+
+				if err != nil {
+					return fmt.Errorf("unable to upload large payload to s3: %w", err)
+				}
+
+				return nil
+			})
+
+			// create an s3 pointer that will be uploaded to SQS in place of the large payload
+			asBytes, err := jsonMarshal(&s3Pointer{
+				S3BucketName: s3Bucket,
+				S3Key:        s3Key,
+				class:        c.pointerClass,
 			})
 
 			if err != nil {
-				return fmt.Errorf("unable to upload large payload to s3: %w", err)
+				return nil, fmt.Errorf("unable to marshal S3 pointer: %w", err)
 			}
 
-			return nil
-		})
+			// copy over all attributes, leaving space for our reserved attribute
+			updatedAttributes := make(map[string]types.MessageAttributeValue, len(e.MessageAttributes)+1)
+			for k, v := range e.MessageAttributes {
+				updatedAttributes[k] = v
+			}
 
-		// create an s3 pointer that will be uploaded to SQS in place of the large payload
-		asBytes, err := jsonMarshal(&s3Pointer{
-			S3BucketName: s3Bucket,
-			S3Key:        s3Key,
-			class:        c.pointerClass,
-		})
+			// assign the reserved attribute to a number containing the size of the original body
+			updatedAttributes[c.reservedAttrs[0]] = types.MessageAttributeValue{
+				DataType:    aws.String("Number"),
+				StringValue: aws.String(strconv.Itoa(len(*e.MessageBody))),
+			}
 
-		if err != nil {
-			return nil, fmt.Errorf("unable to marshal S3 pointer: %w", err)
+			// override attributes and body in the original message
+			copyEntries[i].MessageAttributes = updatedAttributes
+			copyEntries[i].MessageBody = aws.String(string(asBytes))
+
+			msgSize = c.messageSize(copyEntries[i].MessageBody, copyEntries[i].MessageAttributes)
 		}
 
-		// copy over all attributes, leaving space for our reserved attribute
-		updatedAttributes := make(map[string]types.MessageAttributeValue, len(e.MessageAttributes)+1)
-		for k, v := range e.MessageAttributes {
-			updatedAttributes[k] = v
-		}
-
-		// assign the reserved attribute to a number containing the size of the original body
-		updatedAttributes[c.reservedAttrs[0]] = types.MessageAttributeValue{
-			DataType:    aws.String("Number"),
-			StringValue: aws.String(strconv.Itoa(len(*e.MessageBody))),
-		}
-
-		// override attributes and body in the original message
-		copyEntries[i].MessageAttributes = updatedAttributes
-		copyEntries[i].MessageBody = aws.String(string(asBytes))
+		batchSizeBytes += msgSize
 	}
 
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
 
-	return copyEntries, nil
+	// override entries with our copied ones
+	input.Entries = copyEntries
+
+	return c.SQSClient.SendMessageBatch(ctx, &input, optFns...)
 }
 
 // ReceiveMessage is a wrapper for the
