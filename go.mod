@@ -6,7 +6,7 @@ require (
 	github.com/aws/aws-lambda-go v1.41.0
 	github.com/aws/aws-sdk-go-v2 v1.23.5
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.46.0
-	github.com/aws/aws-sdk-go-v2/service/sqs v1.29.2
+	github.com/aws/aws-sdk-go-v2/service/sqs v1.29.3
 	github.com/google/uuid v1.4.0
 	github.com/stretchr/testify v1.8.4
 	golang.org/x/sync v0.5.0
