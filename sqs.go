@@ -1,4 +1,4 @@
-// Generated from service/sqs/v1.28.4
+// Generated from service/sqs/v1.29.6
 
 package sqsextendedclient
 
@@ -12,6 +12,12 @@ import (
 // Client provides the API client to make operations call for Amazon Simple Queue
 // Service.
 type SQSClient interface {
+	// Options returns a copy of the client configuration.
+	//
+	// Callers SHOULD NOT perform mutations on any inner structures within client
+	// config. Config overrides should instead be made on a per-operation basis through
+	// functional options.
+	Options() sqs.Options
 	// Adds a permission to a queue for a specific principal (https://docs.aws.amazon.com/general/latest/gr/glos-chap.html#P)
 	// . This allows sharing access to the queue. When you create a queue, you have
 	// full control access rights for the queue. Only you, the owner of the queue, can
