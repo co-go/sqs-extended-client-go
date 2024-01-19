@@ -3,7 +3,7 @@ module github.com/jwcorle/sqs-extended-client-go
 go 1.20
 
 require (
-	github.com/aws/aws-lambda-go v1.44.0
+	github.com/aws/aws-lambda-go v1.45.0
 	github.com/aws/aws-sdk-go-v2 v1.24.1
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.48.0
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.29.7
