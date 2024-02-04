@@ -1,4 +1,4 @@
-module github.com/jwcorle/sqs-extended-client-go
+module github.com/co-go/sqs-extended-client-go
 
 go 1.20
 

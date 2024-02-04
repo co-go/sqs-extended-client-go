@@ -2,7 +2,7 @@
 <img src="doc/logo.png" width="500px" />
 <h1>sqs-extended-client-go</h1>
 <i>Send and receive large messages through SQS via S3</i><br/><br/>
-<a href="https://goreportcard.com/report/github.com/jwcorle/sqs-extended-client-go"><img src="https://goreportcard.com/badge/github.com/jwcorle/sqs-extended-client-go"/></a> <a href="https://codecov.io/gh/jwcorle/sqs-extended-client-go" ><img src="https://codecov.io/gh/jwcorle/sqs-extended-client-go/branch/main/graph/badge.svg?token=OFGVL7Y8U5"/></a> <a href="https://pkg.go.dev/github.com/jwcorle/sqs-extended-client-go"><img src="https://pkg.go.dev/badge/github.com/jwcorle/sqs-extended-client-go.svg" alt="Go Reference"></a>
+<a href="https://goreportcard.com/report/github.com/co-go/sqs-extended-client-go"><img src="https://goreportcard.com/badge/github.com/co-go/sqs-extended-client-go"/></a> <a href="https://codecov.io/gh/co-go/sqs-extended-client-go"><img src="https://codecov.io/gh/co-go/sqs-extended-client-go/graph/badge.svg?token=OFGVL7Y8U5"/></a> <a href="https://pkg.go.dev/github.com/co-go/sqs-extended-client-go"><img src="https://pkg.go.dev/badge/github.com/co-go/sqs-extended-client-go.svg" alt="Go Reference"></a>
 </div>
 
 ****
@@ -13,7 +13,7 @@ The Extended Client also comes with a bit of extra functionality for dealing wit
 
 ## Installation
 ```sh
-go get -u github.com/jwcorle/sqs-extended-client-go
+go get -u github.com/co-go/sqs-extended-client-go
 ```
 
 ## Quick Start
@@ -26,7 +26,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
-	sqsextendedclient "github.com/jwcorle/sqs-extended-client-go"
+	sqsextendedclient "github.com/co-go/sqs-extended-client-go"
 )
 
 const queueURL = "https://sqs.amazonaws.com/12345/testing-queue"
@@ -75,7 +75,7 @@ func main() {
 ```
 
 ## Working with Lambda
-When using an [SQS queue as an event source for a Lambda function](https://docs.aws.amazon.com/lambda/latest/dg/with-sqs.html), the Lambda will be invoked on the configured interval with a batch of messages. Some of these messages might need to be fetched from S3 if they exceeded the limit of the queue and were sent with this (or another) SQS Extended Client. This is the use case for [`RetrieveLambdaEvent`](https://pkg.go.dev/github.com/jwcorle/sqs-extended-client-go#Client.RetrieveLambdaEvent). Very similar to [`RetrieveMessage`](https://pkg.go.dev/github.com/jwcorle/sqs-extended-client-go#Client.ReceiveMessage), it will parse any extended messages in the event and retrieve them from S3, returning a new event will the full payloads. If none of the events match the extended format, no action is taken!
+When using an [SQS queue as an event source for a Lambda function](https://docs.aws.amazon.com/lambda/latest/dg/with-sqs.html), the Lambda will be invoked on the configured interval with a batch of messages. Some of these messages might need to be fetched from S3 if they exceeded the limit of the queue and were sent with this (or another) SQS Extended Client. This is the use case for [`RetrieveLambdaEvent`](https://pkg.go.dev/github.com/co-go/sqs-extended-client-go#Client.RetrieveLambdaEvent). Very similar to [`RetrieveMessage`](https://pkg.go.dev/github.com/co-go/sqs-extended-client-go#Client.ReceiveMessage), it will parse any extended messages in the event and retrieve them from S3, returning a new event will the full payloads. If none of the events match the extended format, no action is taken!
 
 ### Example
 ```go
@@ -88,7 +88,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
-	sqsextendedclient "github.com/jwcorle/sqs-extended-client-go"
+	sqsextendedclient "github.com/co-go/sqs-extended-client-go"
 )
 
 type Environment struct {
