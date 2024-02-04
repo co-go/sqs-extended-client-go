@@ -1,6 +1,6 @@
-module github.com/jwcorle/sqs-extended-client-go
+module github.com/co-go/sqs-extended-client-go
 
-go 1.20
+go 1.21
 
 require (
 	github.com/aws/aws-lambda-go v1.45.0
