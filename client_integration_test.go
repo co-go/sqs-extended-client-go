@@ -42,7 +42,6 @@ func startIntegrationTest(t *testing.T) *Integration {
 		return nil
 	}
 
-	// TODO: check to make sure user has set s3 bucket, sqs queue, and region in order to run test
 	ctx := context.Background()
 	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
 	assert.NoError(t, err)
