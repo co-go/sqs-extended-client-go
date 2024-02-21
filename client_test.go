@@ -21,8 +21,6 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
-// assert not mutating inputs
-
 type mockSQSClient struct {
 	*mock.Mock
 	SQSClient
