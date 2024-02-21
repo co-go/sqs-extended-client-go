@@ -1,0 +1,17 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":automergeBranch",
+    ":groupAll"
+  ],
+  "packageRules": [
+    {
+      "automerge": true,
+      "automergeType": "pr",
+      "matchPackagePatterns": [
+        "github.com/aws/aws-sdk-go-v2/service/sqs"
+      ]
+    }
+  ]
+}
