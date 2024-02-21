@@ -9,8 +9,8 @@
     {
       "automerge": true,
       "automergeType": "pr",
-      "matchPackagePatterns": [
-        "github.com/aws/aws-sdk-go-v2/service/sqs"
+      "matchPackageNames": [
+        "github.com/aws/aws-sdk-go-v2/service/sqs "
       ]
     }
   ]
