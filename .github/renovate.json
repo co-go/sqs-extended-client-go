@@ -7,8 +7,7 @@
   ],
   "packageRules": [
     {
-      "automerge": true,
-      "automergeType": "pr",
+      "extends": [":automergeDisabled"],
       "matchPackageNames": [
         "github.com/aws/aws-sdk-go-v2/service/sqs"
       ]
