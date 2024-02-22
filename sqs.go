@@ -1,11 +1,58 @@
-// Generated from service/sqs/v1.30.1
+// Generated from service/sqs/v1.31.0
 
 package sqsextendedclient
 
 import (
+	"bytes"
 	"context"
 
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"crypto/md5"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"io/ioutil"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"path"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/defaults"
+	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
+	"github.com/aws/aws-sdk-go-v2/aws/protocol/restjson"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
+	"github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
+	internalauth "github.com/aws/aws-sdk-go-v2/internal/auth"
+	internalauthsmithy "github.com/aws/aws-sdk-go-v2/internal/auth/smithy"
+	internalConfig "github.com/aws/aws-sdk-go-v2/internal/configsources"
+	"github.com/aws/aws-sdk-go-v2/internal/endpoints"
+	"github.com/aws/aws-sdk-go-v2/internal/endpoints/awsrulesfn"
+	internalendpoints "github.com/aws/aws-sdk-go-v2/service/sqs/internal/endpoints"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
+	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
+	smithy "github.com/aws/smithy-go"
+	smithyauth "github.com/aws/smithy-go/auth"
+	smithydocument "github.com/aws/smithy-go/document"
+	"github.com/aws/smithy-go/encoding/httpbinding"
+	smithyjson "github.com/aws/smithy-go/encoding/json"
+	smithyendpoints "github.com/aws/smithy-go/endpoints"
+	smithyio "github.com/aws/smithy-go/io"
+	"github.com/aws/smithy-go/logging"
+	"github.com/aws/smithy-go/middleware"
+	"github.com/aws/smithy-go/ptr"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
+	"github.com/google/go-cmp/cmp"
 )
 
 // SQSClient is a wrapper interface for the [github.com/aws/aws-sdk-go-v2/service/sqs.Client].
