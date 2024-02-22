@@ -5,6 +5,7 @@
     "group:all",
     ":automergeBranch"
   ],
+  "automerge": true,
   "packageRules": [
     {
       "extends": [":automergeDisabled"],
