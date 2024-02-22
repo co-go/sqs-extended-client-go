@@ -5,16 +5,7 @@
     ":automergeBranch"
   ],
   "automerge": true,
-  "printConfig": true,
   "packageRules": [
-    {
-      "groupName": "all dependencies",
-      "groupSlug": "all",
-      "matchPackagePatterns": [
-        "*"
-      ],
-      "excludePackageNames": ["github.com/aws/aws-sdk-go-v2/service/sqs"]
-    },
     {
       "extends": [":automergeDisabled"],
       "matchPackageNames": ["github.com/aws/aws-sdk-go-v2/service/sqs"]
