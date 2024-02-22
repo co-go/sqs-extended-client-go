@@ -6,6 +6,7 @@
     ":automergeBranch"
   ],
   "automerge": true,
+  "printConfig": true,
   "packageRules": [
     {
       "extends": [":automergeDisabled"],
