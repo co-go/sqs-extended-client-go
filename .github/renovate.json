@@ -1,0 +1,30 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    ":dependencyDashboard",
+    ":semanticPrefixFixDepsChoreOthers",
+    ":ignoreModulesAndTests",
+    "group:recommended",
+    "replacements:all",
+    "workarounds:all",
+    ":automergeBranch"
+  ],
+  "automerge": true,
+  "packageRules": [
+    {
+      "extends": "monorepo:aws-sdk-go-v2",
+      "groupName": "aws-sdk-go-v2 monorepo",
+      "excludePackageNames": ["github.com/aws/aws-sdk-go-v2/service/sqs"],
+      "matchUpdateTypes": [
+        "digest",
+        "patch",
+        "minor",
+        "major"
+      ]
+    },
+    {
+      "extends": [":automergeDisabled"],
+      "matchPackageNames": ["github.com/aws/aws-sdk-go-v2/service/sqs"]
+    }
+  ]
+}
