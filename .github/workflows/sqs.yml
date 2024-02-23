@@ -12,6 +12,8 @@ jobs:
       contents: write
     steps:
     - uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GH_TOKEN }}
 
     - name: Set up Go
       uses: actions/setup-go@v5
@@ -27,4 +29,7 @@ jobs:
     - name: Commit Change
       uses: stefanzweifel/git-auto-commit-action@v5
       with:
+        commit_user_name: co-go
+        commit_user_email: jcorley.w@gmail.com
+        commit_author: co-go <jcorley.w@gmail.com>
         commit_message: "chore: regenerate sqs interface"
