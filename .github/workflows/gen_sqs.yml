@@ -1,0 +1,30 @@
+name: Regenerate SQS
+
+on:
+  push:
+    branches: [ "renovate/**aws-sdk-go-v2-service-sqs*" ]
+    paths: [ "go.mod" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.22'
+
+    - name: Install Dependancies
+      run: make setup
+
+    - name: Generate SQS Interface
+      run: make generate_sqs
+
+    - name: Commit Change
+      uses: stefanzweifel/git-auto-commit-action@v5
+      with:
+        commit_message: "chore: regenerate sqs interface"
