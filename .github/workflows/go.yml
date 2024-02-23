@@ -9,6 +9,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # ensure we don't run multiple times on PRs from renovate branches
+    if: github.event_name != 'pull_request' || !startsWith(github.head_ref, 'renovate/')
     permissions:
       id-token: write
     steps:

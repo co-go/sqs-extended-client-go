@@ -1,4 +1,4 @@
-name: Regenerate SQS
+name: Generate SQS Interface
 
 on:
   push:
