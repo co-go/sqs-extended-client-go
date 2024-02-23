@@ -15,12 +15,7 @@
       "extends": "monorepo:aws-sdk-go-v2",
       "groupName": "aws-sdk-go-v2 monorepo",
       "excludePackageNames": ["github.com/aws/aws-sdk-go-v2/service/sqs"],
-      "matchUpdateTypes": [
-        "digest",
-        "patch",
-        "minor",
-        "major"
-      ]
+      "matchUpdateTypes": ["digest", "patch", "minor", "major"]
     },
     {
       "extends": [":automergeDisabled"],
