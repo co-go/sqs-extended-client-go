@@ -19,8 +19,8 @@ generate_sqs:
 	@git clone --no-checkout --filter=tree:0 https://github.com/aws/aws-sdk-go-v2 tmp_aws
 	@cd tmp_aws; git sparse-checkout set --no-cone service/sqs && git checkout
 	@ifacemaker -f "tmp_aws/service/sqs/*.go" -i "SQSClient" -p "sqsextendedclient" -s "Client" -o "sqs.go" -c "Generated from $$(cd tmp_aws; git tag -l 'service/sqs/v*' --sort -creatordate | head -n 1)" -D -y 'SQSClient is a wrapper interface for the [github.com/aws/aws-sdk-go-v2/service/sqs.Client].'
-	@sed -i '' 's/*/*sqs./gi' sqs.go
-	@rm -rf tmp_aws
+	@sed -i.bak 's/*/*sqs./gi' sqs.go
+	@rm -rf tmp_aws sqs.go.bak
 	$(call log_done)
 
 test:
