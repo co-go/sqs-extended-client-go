@@ -44,6 +44,7 @@ jobs:
     permissions:
       pull-requests: write
       checks: write
+      id-token: write
     if: |
       github.event_name == 'repository_dispatch' &&
       github.event.client_payload.slash_command.args.named.sha != '' &&
