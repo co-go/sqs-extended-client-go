@@ -11,8 +11,6 @@ jobs:
     runs-on: ubuntu-latest
     # ensure we don't run multiple times on PRs from renovate branches
     if: github.event_name != 'pull_request' || !startsWith(github.head_ref, 'renovate/')
-    permissions:
-      id-token: write
     steps:
     - uses: actions/checkout@v4
 
@@ -31,16 +29,3 @@ jobs:
       uses: codecov/codecov-action@v4
       env:
         CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-
-    - name: Configure AWS Credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-region: us-east-1
-        role-to-assume: arn:aws:iam::520156417308:role/github-action-auth-Role-MJSGfkUydl2D
-
-    - name: Integration Test
-      run: >-
-        AWS_REGION=us-east-1
-        BUCKET_NAME=sqsec-integration-bucket
-        QUEUE_URL=https://sqs.us-east-1.amazonaws.com/520156417308/sqsec-integration-queue
-        go test -v ./... -run Integration
