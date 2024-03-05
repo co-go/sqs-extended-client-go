@@ -192,6 +192,10 @@ func (c *Client) attributeSize(attributes map[string]types.MessageAttributeValue
 				sum.Add(int64(len(*attr.StringValue)))
 			}
 
+			if attr.DataType != nil {
+				sum.Add(int64(len(*attr.DataType)))
+			}
+
 			wg.Done()
 		}(k, v)
 	}

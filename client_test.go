@@ -143,12 +143,18 @@ func TestAttributeSize(t *testing.T) {
 	}))
 
 	assert.Equal(t, int64(20), c.attributeSize(map[string]types.MessageAttributeValue{
+		"testing_data_type": {
+			DataType: aws.String("int"),
+		},
+	}))
+
+	assert.Equal(t, int64(20), c.attributeSize(map[string]types.MessageAttributeValue{
 		"testing_binary": {
 			BinaryValue: []byte{1, 2, 3, 4, 5, 6},
 		},
 	}))
 
-	assert.Equal(t, int64(47), c.attributeSize(map[string]types.MessageAttributeValue{
+	assert.Equal(t, int64(65), c.attributeSize(map[string]types.MessageAttributeValue{
 		"binary_attr": {
 			BinaryValue: []byte{1, 2, 3, 4, 5, 6},
 		},
@@ -157,6 +163,9 @@ func TestAttributeSize(t *testing.T) {
 		},
 		"string_attr2": {
 			StringValue: aws.String("str"),
+		},
+		"data_type_attr1": {
+			DataType: aws.String("int"),
 		},
 	}))
 }
