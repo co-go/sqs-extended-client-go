@@ -21,8 +21,6 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
-// assert not mutating inputs
-
 type mockSQSClient struct {
 	*mock.Mock
 	SQSClient
@@ -453,6 +451,103 @@ func TestSendMessageBatch(t *testing.T) {
 			},
 		},
 		QueueUrl: aws.String("testing_url|override_bucket"),
+	})
+
+	assert.Len(t, ms3c.Calls, 2)
+	assert.Nil(t, err)
+}
+
+func TestSendMessageBatchMessageSizesBelowThreshold(t *testing.T) {
+	ms3c := &mockS3Client{&mock.Mock{}}
+	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
+	msqsc.On(
+		"SendMessageBatch",
+		mock.Anything,
+		mock.MatchedBy(func(params *sqs.SendMessageBatchInput) bool {
+			assert.Equal(t, "testing_url", *params.QueueUrl)
+			assert.Len(t, params.Entries, 2)
+			assert.Equal(t, "entry_1", *params.Entries[0].Id)
+			assert.Equal(t, "entry_2", *params.Entries[1].Id)
+			assert.Equal(t, "testing body 1", *params.Entries[0].MessageBody)
+			assert.Equal(t, "testing body 2", *params.Entries[1].MessageBody)
+			assert.Equal(t, "hi", *params.Entries[0].MessageAttributes["testing_attribute"].StringValue)
+			assert.Equal(t, "hello", *params.Entries[1].MessageAttributes["testing_attribute"].StringValue)
+			assert.Nil(t, params.Entries[0].MessageAttributes["ExtendedPayloadSize"].StringValue)
+			assert.Nil(t, params.Entries[1].MessageAttributes["ExtendedPayloadSize"].StringValue)
+			return true
+		}),
+		mock.Anything).
+		Return(&sqs.SendMessageBatchOutput{}, nil)
+
+	c, err := New(msqsc, ms3c, WithMessageSizeThreshold(500), WithS3BucketName("test_bucket"))
+	assert.Nil(t, err)
+
+	_, err = c.SendMessageBatch(context.Background(), &sqs.SendMessageBatchInput{
+		Entries: []types.SendMessageBatchRequestEntry{
+			{
+				Id:          aws.String("entry_1"),
+				MessageBody: aws.String("testing body 1"),
+				MessageAttributes: map[string]types.MessageAttributeValue{
+					"testing_attribute": {StringValue: aws.String("hi")},
+				},
+			},
+			{
+				Id:          aws.String("entry_2"),
+				MessageBody: aws.String("testing body 2"),
+				MessageAttributes: map[string]types.MessageAttributeValue{
+					"testing_attribute": {StringValue: aws.String("hello")},
+				},
+			},
+		},
+		QueueUrl: aws.String("testing_url|override_bucket"),
+	})
+
+	assert.Zero(t, ms3c.Calls)
+	assert.Len(t, msqsc.Calls, 1)
+	assert.Nil(t, err)
+}
+
+func TestSendMessageBatchSizeAboveThreshold(t *testing.T) {
+	ms3c := &mockS3Client{&mock.Mock{}}
+	ms3c.On("PutObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.PutObjectOutput{}, nil)
+
+	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
+	msqsc.On(
+		"SendMessageBatch",
+		mock.Anything,
+		mock.MatchedBy(func(params *sqs.SendMessageBatchInput) bool {
+			assert.Len(t, params.Entries, 3)
+			assert.Equal(t, "entry_1", *params.Entries[0].Id)
+			assert.Equal(t, "entry_2", *params.Entries[1].Id)
+			assert.Equal(t, "entry_3", *params.Entries[2].Id)
+			assert.Nil(t, params.Entries[0].MessageAttributes["ExtendedPayloadSize"].StringValue)
+			assert.Equal(t, "43", *params.Entries[1].MessageAttributes["ExtendedPayloadSize"].StringValue)
+			assert.Equal(t, "53", *params.Entries[2].MessageAttributes["ExtendedPayloadSize"].StringValue)
+			assert.Equal(t, "testing body 1", *params.Entries[0].MessageBody)
+			return true
+		}),
+		mock.Anything).
+		Return(&sqs.SendMessageBatchOutput{}, nil)
+
+	c, err := New(msqsc, ms3c, WithBatchMessageSizeThreshold(20))
+	assert.Nil(t, err)
+
+	_, err = c.SendMessageBatch(context.Background(), &sqs.SendMessageBatchInput{
+		Entries: []types.SendMessageBatchRequestEntry{
+			{
+				Id:          aws.String("entry_1"),
+				MessageBody: aws.String("testing body 1"),
+			},
+			{
+				Id:          aws.String("entry_2"),
+				MessageBody: aws.String("testing body 2 with a little larger payload"),
+			},
+			{
+				Id:          aws.String("entry_3"),
+				MessageBody: aws.String("testing body 3 with an even bigger and larger payload"),
+			},
+		},
+		QueueUrl: aws.String("some_url"),
 	})
 
 	assert.Len(t, ms3c.Calls, 2)
