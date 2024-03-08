@@ -7,7 +7,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.25.3
 	github.com/aws/aws-sdk-go-v2/config v1.27.7
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.51.4
-	github.com/aws/aws-sdk-go-v2/service/sqs v1.31.1
+	github.com/aws/aws-sdk-go-v2/service/sqs v1.31.2
 	github.com/google/uuid v1.6.0
 	github.com/stretchr/testify v1.9.0
 	golang.org/x/sync v0.6.0
