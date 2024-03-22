@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -99,6 +100,8 @@ func TestNewClient(t *testing.T) {
 }
 
 func TestNewClientOptions(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
 	c, err := New(
 		nil,
 		nil,
@@ -108,6 +111,7 @@ func TestNewClientOptions(t *testing.T) {
 		WithReservedAttributeNames([]string{"Reserved", "Attributes"}),
 		WithS3BucketName("BUCKET!"),
 		WithObjectPrefix("custom_prefix"),
+		WithLogger(logger),
 	)
 
 	assert.Nil(t, err)
@@ -119,6 +123,7 @@ func TestNewClientOptions(t *testing.T) {
 	assert.Equal(t, []string{"Reserved", "Attributes"}, c.reservedAttrs)
 	assert.Equal(t, "BUCKET!", c.bucketName)
 	assert.Equal(t, "custom_prefix", c.objectPrefix)
+	assert.Equal(t, logger, c.logger)
 }
 
 func TestNewClientOptionsFailure(t *testing.T) {
@@ -130,6 +135,43 @@ func TestNewClientOptionsFailure(t *testing.T) {
 
 	assert.ErrorContains(t, err, "boom")
 	assert.Nil(t, c)
+}
+
+func TestNewClientSizeCalculation(t *testing.T) {
+	testCases := []struct {
+		desc                  string
+		options               []ClientOption
+		expectedAttributeSize int
+		expectedPointerSize   int
+	}{
+		{
+			desc:                  "default sizes",
+			options:               nil,
+			expectedAttributeSize: 25,
+			expectedPointerSize:   121,
+		},
+		{
+			desc:                  "custom pointer class",
+			options:               []ClientOption{WithPointerClass("custom.pointer")},
+			expectedAttributeSize: 25,
+			expectedPointerSize:   85,
+		},
+		{
+			desc:                  "custom reserved attributes",
+			options:               []ClientOption{WithReservedAttributeNames([]string{"CustomAttr"})},
+			expectedAttributeSize: 16,
+			expectedPointerSize:   121,
+		},
+	}
+	for _, tC := range testCases {
+		t.Run(tC.desc, func(t *testing.T) {
+			c, err := New(nil, nil, tC.options...)
+			assert.NoError(t, err)
+			assert.Equal(t, tC.expectedAttributeSize, c.baseAttributeSize)
+			assert.Equal(t, tC.expectedPointerSize, c.baseS3PointerSize)
+		})
+	}
+
 }
 
 func TestAttributeSize(t *testing.T) {
@@ -384,6 +426,130 @@ func TestSendMessageMarshalFailure(t *testing.T) {
 	assert.ErrorContains(t, err, "unable to marshal S3 pointer")
 }
 
+func TestOptimizeBatchPayload(t *testing.T) {
+	testCases := []struct {
+		desc             string
+		clientOptions    []ClientOption
+		baseBatchPayload batchPayload
+		messages         []batchMessageMeta
+		checks           func(*testing.T, *batchPayload)
+	}{
+		{
+			desc:          "payload under threshold",
+			clientOptions: []ClientOption{WithBatchMessageSizeThreshold(50)},
+			messages: []batchMessageMeta{
+				{payloadIndex: 0, msgSize: messageSize{bodySize: 10}},
+				{payloadIndex: 1, msgSize: messageSize{bodySize: 30}},
+				{payloadIndex: 2, msgSize: messageSize{bodySize: 5}},
+			},
+			baseBatchPayload: batchPayload{},
+			checks: func(t *testing.T, bp *batchPayload) {
+				assert.Equal(t, int64(10+30+5), bp.batchBytes)
+				assert.Len(t, bp.extendedMessages, 0)
+			},
+		},
+		{
+			desc:          "small payloads under large threshold",
+			clientOptions: []ClientOption{WithBatchMessageSizeThreshold(5000)},
+			messages: []batchMessageMeta{
+				{payloadIndex: 0, msgSize: messageSize{bodySize: 10}},
+				{payloadIndex: 1, msgSize: messageSize{bodySize: 30}},
+				{payloadIndex: 2, msgSize: messageSize{bodySize: 5}},
+			},
+			baseBatchPayload: batchPayload{},
+			checks: func(t *testing.T, bp *batchPayload) {
+				assert.Equal(t, int64(10+30+5), bp.batchBytes)
+				assert.Len(t, bp.extendedMessages, 0)
+			},
+		},
+		{
+			desc:          "payload equals threshold",
+			clientOptions: []ClientOption{WithBatchMessageSizeThreshold(45)},
+			messages: []batchMessageMeta{
+				{payloadIndex: 0, msgSize: messageSize{bodySize: 10}},
+				{payloadIndex: 1, msgSize: messageSize{bodySize: 30}},
+				{payloadIndex: 2, msgSize: messageSize{bodySize: 5}},
+			},
+			baseBatchPayload: batchPayload{},
+			checks: func(t *testing.T, bp *batchPayload) {
+				assert.Equal(t, int64(10+30+5), bp.batchBytes)
+				assert.Len(t, bp.extendedMessages, 0)
+			},
+		},
+		{
+			desc:          "single message causes payload to exceed threshold",
+			clientOptions: []ClientOption{WithBatchMessageSizeThreshold(200)},
+			messages: []batchMessageMeta{
+				{payloadIndex: 1, msgSize: messageSize{bodySize: 30}},
+				{payloadIndex: 2, msgSize: messageSize{bodySize: 5}},
+				{payloadIndex: 3, msgSize: messageSize{bodySize: 200}}, // replaced with a payload of size 149
+			},
+			baseBatchPayload: batchPayload{},
+			checks: func(t *testing.T, bp *batchPayload) {
+				assert.Equal(t, int64(30+5+149), bp.batchBytes)
+				assert.Len(t, bp.extendedMessages, 1)
+				assert.Equal(t, 3, bp.extendedMessages[0].payloadIndex)
+			},
+		},
+		{
+			desc:          "all messages cause payload to exceed threshold",
+			clientOptions: []ClientOption{WithBatchMessageSizeThreshold(300)},
+			messages: []batchMessageMeta{
+				{payloadIndex: 1, msgSize: messageSize{bodySize: 1000}},
+				{payloadIndex: 2, msgSize: messageSize{bodySize: 100}},
+				{payloadIndex: 3, msgSize: messageSize{bodySize: 120}},
+				{payloadIndex: 4, msgSize: messageSize{bodySize: 200}},
+			},
+			baseBatchPayload: batchPayload{},
+			checks: func(t *testing.T, bp *batchPayload) {
+				assert.Equal(t, int64(150+100+120+149), bp.batchBytes)
+				assert.Len(t, bp.extendedMessages, 2)
+				assert.Equal(t, 1, bp.extendedMessages[0].payloadIndex)
+				assert.Equal(t, 4, bp.extendedMessages[1].payloadIndex)
+			},
+		},
+		{
+			desc:          "minimize data sent to s3",
+			clientOptions: []ClientOption{WithBatchMessageSizeThreshold(600)},
+			messages: []batchMessageMeta{
+				{payloadIndex: 1, msgSize: messageSize{bodySize: 400}},
+				{payloadIndex: 2, msgSize: messageSize{bodySize: 450}},
+			},
+			baseBatchPayload: batchPayload{},
+			checks: func(t *testing.T, bp *batchPayload) {
+				assert.Equal(t, int64(149+450), bp.batchBytes)
+				assert.Len(t, bp.extendedMessages, 1)
+				assert.Equal(t, 1, bp.extendedMessages[0].payloadIndex)
+			},
+		},
+		{
+			desc:          "minimize data sent to s3 - alternate",
+			clientOptions: []ClientOption{WithBatchMessageSizeThreshold(800)},
+			messages: []batchMessageMeta{
+				{payloadIndex: 2, msgSize: messageSize{bodySize: 450}},
+				{payloadIndex: 1, msgSize: messageSize{bodySize: 400}},
+			},
+			baseBatchPayload: batchPayload{},
+			checks: func(t *testing.T, bp *batchPayload) {
+				assert.Equal(t, int64(149+450), bp.batchBytes)
+				assert.Len(t, bp.extendedMessages, 1)
+				assert.Equal(t, 1, bp.extendedMessages[0].payloadIndex)
+			},
+		},
+	}
+	for _, tC := range testCases {
+		t.Run(tC.desc, func(t *testing.T) {
+			c, err := New(nil, nil, tC.clientOptions...)
+			assert.NoError(t, err)
+
+			tC.baseBatchPayload.s3PointerSize += c.baseS3PointerSize
+
+			bp := c.optimizeBatchPayload(&tC.baseBatchPayload, tC.messages)
+			tC.checks(t, bp)
+		})
+	}
+}
+
 func TestSendMessageBatch(t *testing.T) {
 	key1, key2 := new(string), new(string)
 	ms3c := &mockS3Client{&mock.Mock{}}
@@ -521,9 +687,10 @@ func TestSendMessageBatchSizeAboveThreshold(t *testing.T) {
 			assert.Equal(t, "entry_2", *params.Entries[1].Id)
 			assert.Equal(t, "entry_3", *params.Entries[2].Id)
 			assert.Nil(t, params.Entries[0].MessageAttributes["ExtendedPayloadSize"].StringValue)
-			assert.Equal(t, "43", *params.Entries[1].MessageAttributes["ExtendedPayloadSize"].StringValue)
-			assert.Equal(t, "53", *params.Entries[2].MessageAttributes["ExtendedPayloadSize"].StringValue)
+			assert.Nil(t, params.Entries[1].MessageAttributes["ExtendedPayloadSize"].StringValue)
+			assert.Equal(t, "500", *params.Entries[2].MessageAttributes["ExtendedPayloadSize"].StringValue)
 			assert.Equal(t, "testing body 1", *params.Entries[0].MessageBody)
+			assert.Equal(t, "testing body 2 with a little larger payload", *params.Entries[1].MessageBody)
 			return true
 		}),
 		mock.Anything).
@@ -544,13 +711,13 @@ func TestSendMessageBatchSizeAboveThreshold(t *testing.T) {
 			},
 			{
 				Id:          aws.String("entry_3"),
-				MessageBody: aws.String("testing body 3 with an even bigger and larger payload"),
+				MessageBody: aws.String(strings.Repeat("large", 100)),
 			},
 		},
 		QueueUrl: aws.String("some_url"),
 	})
 
-	assert.Len(t, ms3c.Calls, 2)
+	assert.Len(t, ms3c.Calls, 1)
 	assert.Nil(t, err)
 }
 
