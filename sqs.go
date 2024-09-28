@@ -1,4 +1,4 @@
-// Generated from service/sqs/v1.35.2
+// Generated from service/sqs/v1.35.3
 
 package sqsextendedclient
 
