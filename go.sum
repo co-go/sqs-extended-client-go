@@ -84,6 +84,8 @@ github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.6.7 h1:lL7IfaFzngfx0ZwU
 github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.6.7/go.mod h1:QraP0UcVlQJsmHfioCrveWOC1nbiWUl3ej08h4mXWoc=
 github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.6.8 h1:zAxi9p3wsZMIaVCdoiQp2uZ9k1LsZvmAnoTBeZPXom0=
 github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.6.8/go.mod h1:3XkePX5dSaxveLAYY7nsbsZZrKxCyEuE5pM4ziFxyGg=
+github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.6.9 h1:VZPDrbzdsU1ZxhyWrvROqLY0nxFWgMCAzhn/nYz3X48=
+github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.6.9/go.mod h1:3XkePX5dSaxveLAYY7nsbsZZrKxCyEuE5pM4ziFxyGg=
 github.com/aws/aws-sdk-go-v2/config v1.26.6 h1:Z/7w9bUqlRI0FFQpetVuFYEsjzE3h7fpU6HuGmfPL/o=
 github.com/aws/aws-sdk-go-v2/config v1.26.6/go.mod h1:uKU6cnDmYCvJ+pxO9S4cWDb2yWWIH5hra+32hVh1MI4=
 github.com/aws/aws-sdk-go-v2/config v1.27.2 h1:XnMKB9JRjfnxg9ZkUic4MiapnWJISWRo8HVM+7nx9qQ=
@@ -956,6 +958,8 @@ github.com/aws/aws-sdk-go-v2/service/s3 v1.76.0 h1:ehvUZNVrGA1Usa6yYo8A8pUqrigRe
 github.com/aws/aws-sdk-go-v2/service/s3 v1.76.0/go.mod h1:KuLNrwYJFaC2AVZ+CVVc12k9NyqwgWsoNNHjwqF6QNk=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.76.1 h1:d4ZG8mELlLeUWFBMCqPtRfEP3J6aQgg/KTC9jLSlkMs=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.76.1/go.mod h1:uZoEIR6PzGOZEjgAZE4hfYfsqK2zOHhq68JLKEvvXj4=
+github.com/aws/aws-sdk-go-v2/service/s3 v1.77.0 h1:RCOi1rDmLqOICym/6UeS2cqKED4T4m966w2rl1HfL+g=
+github.com/aws/aws-sdk-go-v2/service/s3 v1.77.0/go.mod h1:VC4EKSHqT3nzOcU955VWHMGsQ+w67wfAUBSjC8NOo8U=
 github.com/aws/aws-sdk-go-v2/service/sqs v1.30.1 h1:YgHEUU4euy2VOUAzu08QSjtRwJLa9Nr1MD8qoW/b9RY=
 github.com/aws/aws-sdk-go-v2/service/sqs v1.30.1/go.mod h1:4phHwV34rLb+56VjTud2w7hBu5Q57YIKFIA8Httzljg=
 github.com/aws/aws-sdk-go-v2/service/sqs v1.31.0 h1:QpCpvy+60VQ8BeIoQRwNA+sUGQr7fZxgF7B151RVMxw=
