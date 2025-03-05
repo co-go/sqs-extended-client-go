@@ -1,6 +1,8 @@
 module github.com/co-go/sqs-extended-client-go
 
-go 1.22
+go 1.23.0
+
+toolchain go1.24.1
 
 require (
 	github.com/aws/aws-lambda-go v1.47.0
@@ -10,7 +12,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.38.0
 	github.com/google/uuid v1.6.0
 	github.com/stretchr/testify v1.10.0
-	golang.org/x/sync v0.11.0
+	golang.org/x/sync v0.12.0
 )
 
 require (
