@@ -20,6 +20,9 @@ generate_sqs:
 	@cd tmp_aws; git sparse-checkout set --no-cone service/sqs && git checkout
 	@ifacemaker -f "tmp_aws/service/sqs/*.go" -i "SQSClient" -p "sqsextendedclient" -s "Client" -o "sqs.go" -c "Generated from $$(cd tmp_aws; git tag -l 'service/sqs/v*' --sort -creatordate | head -n 1)" -D -y 'SQSClient is a wrapper interface for the [github.com/aws/aws-sdk-go-v2/service/sqs.Client].'
 	@sed -i.bak 's|*Options|*sqs.Options|gi' sqs.go
+	@if ! grep -q '"github.com/aws/aws-sdk-go-v2/service/sqs"' sqs.go; then\
+        sed -i.bak 's|"context"|"context"\n\n\t"github.com/aws/aws-sdk-go-v2/service/sqs"|gi' sqs.go;\
+    fi
 	@rm -rf tmp_aws sqs.go.bak
 	$(call log_done)
 
