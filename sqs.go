@@ -1,11 +1,9 @@
-// Generated from service/sqs/v1.38.2
+// Generated from service/sqs/v1.38.5
 
 package sqsextendedclient
 
 import (
 	"context"
-
-	"github.com/aws/aws-sdk-go-v2/service/sqs"
 )
 
 // SQSClient is a wrapper interface for the [github.com/aws/aws-sdk-go-v2/service/sqs.Client].
