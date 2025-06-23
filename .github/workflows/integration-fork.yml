@@ -6,7 +6,7 @@ on:
     types: ["ok-to-test-command"]
 
 jobs:
-  integration-fork:
+  test:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write

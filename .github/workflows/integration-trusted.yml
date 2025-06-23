@@ -8,7 +8,7 @@ on:
     types: [opened, synchronize, reopened]
 
 jobs:
-  integration-trusted:
+  test:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
