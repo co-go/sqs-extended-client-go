@@ -923,7 +923,7 @@ func (c *Client) DeleteMessageBatch(ctx context.Context, params *sqs.DeleteMessa
 	input := *params
 	copyEntries := make([]types.DeleteMessageBatchRequestEntry, len(input.Entries))
 	// Map to track message IDs and their S3 information directly
-	bucketKeysByID := make(map[string]struct {
+	bucketKeysById := make(map[string]struct {
 		bucket string
 		key    string
 	})
@@ -936,7 +936,7 @@ func (c *Client) DeleteMessageBatch(ctx context.Context, params *sqs.DeleteMessa
 		bucket, key, handle := parseExtendedReceiptHandle(*e.ReceiptHandle)
 		if bucket != "" && key != "" && handle != "" {
 			// Store the S3 object information with its message ID
-			bucketKeysByID[*e.Id] = struct {
+			bucketKeysById[*e.Id] = struct {
 				bucket string
 				key    string
 			}{
@@ -969,7 +969,7 @@ func (c *Client) DeleteMessageBatch(ctx context.Context, params *sqs.DeleteMessa
 	bucketObjects := make(map[string][]s3types.ObjectIdentifier)
 
 	// Only include objects for successfully deleted messages
-	for id, obj := range bucketKeysByID {
+	for id, obj := range bucketKeysById {
 		if !successfulIds[id] {
 			continue
 		}
@@ -985,10 +985,6 @@ func (c *Client) DeleteMessageBatch(ctx context.Context, params *sqs.DeleteMessa
 
 	// Delete objects in each bucket in parallel
 	for bucket, objects := range bucketObjects {
-		if len(objects) == 0 {
-			continue
-		}
-
 		bucket, objects := bucket, objects
 		g.Go(func() error {
 			_, err := c.s3c.DeleteObjects(ctx, &s3.DeleteObjectsInput{
