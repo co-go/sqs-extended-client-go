@@ -43,7 +43,7 @@ jobs:
           go test -v ./... -run Integration
 
       - name: Add job status
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         env:
           number: ${{ github.event.client_payload.pull_request.number }}
           conclusion: ${{ job.status }}
