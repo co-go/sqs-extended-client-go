@@ -922,7 +922,11 @@ func (c *Client) DeleteMessage(ctx context.Context, params *sqs.DeleteMessageInp
 func (c *Client) DeleteMessageBatch(ctx context.Context, params *sqs.DeleteMessageBatchInput, optFns ...func(*sqs.Options)) (*sqs.DeleteMessageBatchOutput, error) {
 	input := *params
 	copyEntries := make([]types.DeleteMessageBatchRequestEntry, len(input.Entries))
-	deleteRequests := map[string]s3types.Delete{}
+	// Map to track message IDs and their S3 information directly
+	bucketKeysById := make(map[string]struct {
+		bucket string
+		key    string
+	})
 
 	for i, e := range input.Entries {
 		// copy over the entry initially, regardless
@@ -931,16 +935,14 @@ func (c *Client) DeleteMessageBatch(ctx context.Context, params *sqs.DeleteMessa
 		// check to see if ReceiptHandle fits extended format
 		bucket, key, handle := parseExtendedReceiptHandle(*e.ReceiptHandle)
 		if bucket != "" && key != "" && handle != "" {
-			// if this is the first time we've seen a bucket, instantiate the array
-			if _, ok := deleteRequests[bucket]; !ok {
-				deleteRequests[bucket] = s3types.Delete{Objects: []s3types.ObjectIdentifier{}}
+			// Store the S3 object information with its message ID
+			bucketKeysById[*e.Id] = struct {
+				bucket string
+				key    string
+			}{
+				bucket: bucket,
+				key:    key,
 			}
-
-			req := deleteRequests[bucket]
-
-			// append the current key to the list of objects to be deleted
-			req.Objects = append(req.Objects, s3types.ObjectIdentifier{Key: &key})
-			deleteRequests[bucket] = req
 
 			// override the current entry to use new handle
 			copyEntries[i].ReceiptHandle = &handle
@@ -954,17 +956,41 @@ func (c *Client) DeleteMessageBatch(ctx context.Context, params *sqs.DeleteMessa
 		return nil, err
 	}
 
+	// Only delete S3 objects for successfully deleted SQS messages
 	g := new(errgroup.Group)
 
-	// for each delete request (grouped by bucket), send DeleteObjects call in parallel
-	for b, d := range deleteRequests {
-		b, d := b, d
+	// Create a map of successful message IDs for quick lookup
+	successfulIds := make(map[string]bool)
+	for _, entry := range resp.Successful {
+		successfulIds[*entry.Id] = true
+	}
+
+	// Group S3 objects by bucket for efficient deletion
+	bucketObjects := make(map[string][]s3types.ObjectIdentifier)
+
+	// Only include objects for successfully deleted messages
+	for id, obj := range bucketKeysById {
+		if !successfulIds[id] {
+			continue
+		}
+
+		if _, ok := bucketObjects[obj.bucket]; !ok {
+			bucketObjects[obj.bucket] = []s3types.ObjectIdentifier{}
+		}
+
+		bucketObjects[obj.bucket] = append(bucketObjects[obj.bucket], s3types.ObjectIdentifier{
+			Key: aws.String(obj.key),
+		})
+	}
+
+	// Delete objects in each bucket in parallel
+	for bucket, objects := range bucketObjects {
+		bucket, objects := bucket, objects
 		g.Go(func() error {
 			_, err := c.s3c.DeleteObjects(ctx, &s3.DeleteObjectsInput{
-				Bucket: &b,
-				Delete: &d,
+				Bucket: &bucket,
+				Delete: &s3types.Delete{Objects: objects},
 			})
-
 			return err
 		})
 	}

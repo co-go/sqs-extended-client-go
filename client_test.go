@@ -1270,7 +1270,11 @@ func TestDeleteMessageBatchS3Error(t *testing.T) {
 	ms3c.On("DeleteObjects", mock.Anything, mock.Anything, mock.Anything).Return(&s3.DeleteObjectsOutput{}, errors.New("boom"))
 
 	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
-	msqsc.On("DeleteMessageBatch", mock.Anything, mock.Anything, mock.Anything).Return(&sqs.DeleteMessageBatchOutput{}, nil)
+	msqsc.On("DeleteMessageBatch", mock.Anything, mock.Anything, mock.Anything).Return(&sqs.DeleteMessageBatchOutput{
+		Successful: []types.DeleteMessageBatchResultEntry{
+			{Id: aws.String("object_1")},
+		},
+	}, nil)
 
 	c, err := New(msqsc, ms3c)
 	assert.Nil(t, err)
@@ -1304,6 +1308,82 @@ func TestDeleteMessageBatchSQSError(t *testing.T) {
 	})
 
 	assert.Error(t, err)
+}
+
+func TestDeleteMessageBatchPartialSuccess(t *testing.T) {
+	// Set up mock S3 client
+	ms3c := &mockS3Client{&mock.Mock{}}
+
+	// We expect DeleteObjects to be called only for the bucket/key of the successful message
+	ms3c.On(
+		"DeleteObjects",
+		mock.Anything,
+		mock.MatchedBy(func(params *s3.DeleteObjectsInput) bool {
+			// Only the successful message's S3 object should be deleted
+			if *params.Bucket == "some-bucket" {
+				assert.Equal(
+					t,
+					[]s3types.ObjectIdentifier{{Key: aws.String("successful-key")}},
+					params.Delete.Objects,
+				)
+				return true
+			}
+			return false
+		}),
+		mock.Anything).
+		Return(&s3.DeleteObjectsOutput{}, nil)
+
+	// Set up mock SQS client with partial success response
+	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
+	msqsc.On(
+		"DeleteMessageBatch",
+		mock.Anything,
+		mock.MatchedBy(func(params *sqs.DeleteMessageBatchInput) bool {
+			assert.Len(t, params.Entries, 2)
+			assert.Equal(t, "success_id", *params.Entries[0].Id)
+			assert.Equal(t, "fail_id", *params.Entries[1].Id)
+			assert.Equal(t, "success-handle", *params.Entries[0].ReceiptHandle)
+			assert.Equal(t, "fail-handle", *params.Entries[1].ReceiptHandle)
+			return true
+		}),
+		mock.Anything).
+		Return(&sqs.DeleteMessageBatchOutput{
+			Successful: []types.DeleteMessageBatchResultEntry{
+				{Id: aws.String("success_id")},
+			},
+			Failed: []types.BatchResultErrorEntry{
+				{
+					Id:          aws.String("fail_id"),
+					Code:        aws.String("InternalError"),
+					Message:     aws.String("Internal Error"),
+					SenderFault: false,
+				},
+			},
+		}, nil)
+
+	c, err := New(msqsc, ms3c)
+	assert.Nil(t, err)
+
+	// Call DeleteMessageBatch with both entries
+	_, err = c.DeleteMessageBatch(context.Background(), &sqs.DeleteMessageBatchInput{
+		Entries: []types.DeleteMessageBatchRequestEntry{
+			{
+				Id:            aws.String("success_id"),
+				ReceiptHandle: aws.String("-..s3BucketName..-some-bucket-..s3BucketName..--..s3Key..-successful-key-..s3Key..-success-handle"),
+			},
+			{
+				Id:            aws.String("fail_id"),
+				ReceiptHandle: aws.String("-..s3BucketName..-failed-bucket-..s3BucketName..--..s3Key..-failed-key-..s3Key..-fail-handle"),
+			},
+		},
+	})
+
+	// No error should be returned since the SQS call succeeded (even though one message failed)
+	assert.Nil(t, err)
+
+	// Verify all expectations were met (S3 DeleteObjects was called only for the successful message)
+	ms3c.AssertExpectations(t)
+	msqsc.AssertExpectations(t)
 }
 
 func TestClient_ChangeMessageVisibility(t *testing.T) {
