@@ -2,7 +2,6 @@
 name: Integration Tests (Fork)
 
 on:
-  pull_request:
   repository_dispatch:
     types: ["ok-to-test-command"]
 
@@ -14,7 +13,6 @@ jobs:
       checks: write
       id-token: write
     if: |
-      github.event_name == 'repository_dispatch' &&
       github.event.client_payload.slash_command.args.named.sha != '' &&
       contains(
         github.event.client_payload.pull_request.head.sha,
