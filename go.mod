@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.38.0
 	github.com/aws/aws-sdk-go-v2/config v1.31.0
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.87.0
-	github.com/aws/aws-sdk-go-v2/service/sqs v1.40.0
+	github.com/aws/aws-sdk-go-v2/service/sqs v1.41.0
 	github.com/aws/smithy-go v1.22.5
 	github.com/google/uuid v1.6.0
 	github.com/stretchr/testify v1.10.0
