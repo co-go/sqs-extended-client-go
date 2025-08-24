@@ -10,6 +10,7 @@
     ":automergeBranch"
   ],
   "automerge": true,
+  "postUpdateOptions": ["gomodTidy"],
   "packageRules": [
     {
       "extends": "monorepo:aws-sdk-go-v2",
