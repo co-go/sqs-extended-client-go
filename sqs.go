@@ -1,4 +1,4 @@
-// Generated from service/sqs/v1.42.0
+// Generated from service/sqs/v1.42.3
 
 package sqsextendedclient
 
@@ -395,8 +395,8 @@ type SQSClient interface {
 	// returns an HTTP status code of 200 .
 	//
 	// The maximum allowed individual message size and the maximum total payload size
-	// (the sum of the individual lengths of all of the batched messages) are both 256
-	// KiB (262,144 bytes).
+	// (the sum of the individual lengths of all of the batched messages) are both 1
+	// MiB (1,048,576 bytes).
 	//
 	// A message can include only XML, JSON, and unformatted text. The following
 	// Unicode characters are allowed. For more information, see the [W3C specification for characters].

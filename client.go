@@ -28,7 +28,7 @@ const (
 	maxAllowedAttributes        = 10 - 1 // 1 is reserved for the extended client reserved attribute
 	LegacyReservedAttributeName = "SQSLargePayloadSize"
 	LegacyS3PointerClass        = "com.amazon.sqs.javamessaging.MessageS3Pointer"
-	maxMsgSizeInBytes           = 262144 // 256 KiB
+	maxMsgSizeInBytes           = 1048576 // 1 MiB
 )
 
 var (
@@ -69,8 +69,8 @@ type Client struct {
 type ClientOption func(*Client) error
 
 // New returns a newly created [*Client] with defaults:
-//   - MessageSizeThreshold: 262144 (256 KiB)
-//   - BatchMessageSizeThreshold: 262144 (256 KiB)
+//   - MessageSizeThreshold: 1048576 (1 MiB)
+//   - BatchMessageSizeThreshold: 1048576 (1 MiB)
 //   - S3PointerClass: "software.amazon.payloadoffloading.PayloadS3Pointer"
 //   - ReservedAttributeName: "ExtendedPayloadSize"
 //
@@ -140,8 +140,7 @@ func WithS3BucketName(bucketName string) ClientOption {
 	}
 }
 
-// Set the MessageSizeThreshold to some other value (in bytes). By default this is 262144 (256
-// KiB).
+// Set the MessageSizeThreshold to some other value (in bytes). By default this is 1048576 (1 MiB).
 func WithMessageSizeThreshold(size int) ClientOption {
 	return func(c *Client) error {
 		c.messageSizeThreshold = int64(size)
@@ -149,8 +148,8 @@ func WithMessageSizeThreshold(size int) ClientOption {
 	}
 }
 
-// Set the BatchMessageSizeThreshold to some other value (in bytes). By default this is 262144 (256
-// KiB).
+// Set the BatchMessageSizeThreshold to some other value (in bytes). By default this is 1048576 (1
+// MiB).
 func WithBatchMessageSizeThreshold(size int) ClientOption {
 	return func(c *Client) error {
 		c.batchMessageSizeThreshold = int64(size)
@@ -301,7 +300,7 @@ func (p *s3Pointer) MarshalJSON() ([]byte, error) {
 }
 
 // Extended SQS Client wrapper around [github.com/aws/aws-sdk-go-v2/service/sqs.Client.SendMessage].
-// If the provided message exceeds the message size threshold (defaults to 256KiB), then the message
+// If the provided message exceeds the message size threshold (defaults to 1 MiB), then the message
 // will be uploaded to S3. Assuming a successful upload, the message will be altered by:
 //
 //  1. Adding a custom attribute under the configured reserved attribute name that contains the size
@@ -483,7 +482,7 @@ func (c *Client) optimizeBatchPayload(bp *batchPayload, messages []batchMessageM
 // in the response. Because the batch request can result in a combination of successful and
 // unsuccessful actions, you should check for batch errors even when the call returns an HTTP status
 // code of 200 . The maximum allowed individual message size and the maximum total payload size (the
-// sum of the individual lengths of all of the batched messages) are both 256 KiB (262,144 bytes). A
+// sum of the individual lengths of all of the batched messages) are both 1 MiB (1,048,576 bytes). A
 // message can include only XML, JSON, and unformatted text. The following Unicode characters are
 // allowed: #x9 | #xA | #xD | #x20 to #xD7FF | #xE000 to #xFFFD | #x10000 to #x10FFFF Any characters
 // not included in this list will be rejected. For more information, see the W3C specification for

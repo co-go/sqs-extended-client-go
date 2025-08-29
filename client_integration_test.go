@@ -6,6 +6,7 @@ import (
 	"io"
 	"math/rand"
 	"os"
+	"strconv"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -16,7 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-const maxMessageSize = 262144
+const maxMessageSize = 1048576
 
 type Integration struct {
 	t          *testing.T
@@ -88,7 +89,7 @@ func TestBaselineExtendedPayloadIntegration(t *testing.T) {
 	})
 
 	// ensure that oversized payloads will fail to be sent to sqs
-	assert.ErrorContains(t, err, "Message must be shorter than 262144 bytes")
+	assert.ErrorContains(t, err, "Message must be shorter than 1048576 bytes")
 }
 
 func TestCoreFunctionalityIntegration(t *testing.T) {
@@ -117,7 +118,7 @@ func TestCoreFunctionalityIntegration(t *testing.T) {
 			receiveMessageFn: i.sqsc.ReceiveMessage,
 			msgChecks: func(t *testing.T, msg types.Message) {
 				assert.Contains(t, msg.MessageAttributes, "ExtendedPayloadSize")
-				assert.Equal(t, "262145", *msg.MessageAttributes["ExtendedPayloadSize"].StringValue)
+				assert.Equal(t, strconv.Itoa(maxMessageSize+1), *msg.MessageAttributes["ExtendedPayloadSize"].StringValue)
 
 				var extendedPointer s3Pointer
 				err := json.Unmarshal([]byte(*msg.Body), &extendedPointer)
@@ -150,7 +151,7 @@ func TestCoreFunctionalityIntegration(t *testing.T) {
 			receiveMessageFn: i.sqsec.ReceiveMessage,
 			msgChecks: func(t *testing.T, msg types.Message) {
 				assert.Contains(t, msg.MessageAttributes, "ExtendedPayloadSize")
-				assert.Equal(t, "262145", *msg.MessageAttributes["ExtendedPayloadSize"].StringValue)
+				assert.Equal(t, strconv.Itoa(maxMessageSize+1), *msg.MessageAttributes["ExtendedPayloadSize"].StringValue)
 				assert.Equal(t, payloads[2], *msg.Body)
 
 				bucket, key, handle := parseExtendedReceiptHandle(*msg.ReceiptHandle)
@@ -240,7 +241,7 @@ func TestBatchFunctionality(t *testing.T) {
 	for _, msg := range recResp.Messages {
 		if attr, ok := msg.MessageAttributes["ExtendedPayloadSize"]; ok {
 			hasExtended = true
-			assert.Equal(t, "262145", *attr.StringValue)
+			assert.Equal(t, strconv.Itoa(maxMessageSize+1), *attr.StringValue)
 			assert.Equal(t, payloads[1], *msg.Body)
 
 			bucket, key, handle = parseExtendedReceiptHandle(*msg.ReceiptHandle)
