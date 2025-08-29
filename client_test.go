@@ -94,7 +94,7 @@ func TestNewClient(t *testing.T) {
 	assert.Nil(t, err)
 
 	// ensure defaults are set correctly
-	assert.Equal(t, int64(262144), c.messageSizeThreshold)
+	assert.Equal(t, int64(1048576), c.messageSizeThreshold)
 	assert.Equal(t, "software.amazon.payloadoffloading.PayloadS3Pointer", c.pointerClass)
 	assert.Equal(t, []string{"ExtendedPayloadSize", "SQSLargePayloadSize"}, c.reservedAttrs)
 }

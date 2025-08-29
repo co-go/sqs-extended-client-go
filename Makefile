@@ -30,3 +30,8 @@ test:
 	$(call log_info, Running tests...)
 	go test -v ./... -cover
 	$(call log_done)
+
+test_integration:
+	$(call log_info, Running integration tests...)
+	AWS_REGION=us-east-1 BUCKET_NAME=sqsec-integration-bucket QUEUE_URL=https://sqs.us-east-1.amazonaws.com/520156417308/sqsec-integration-queue go test -v ./... -run Integration
+	$(call log_done)
