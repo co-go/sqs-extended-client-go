@@ -39,7 +39,7 @@ jobs:
         run: make test_integration
 
       - name: Add job status
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           number: ${{ github.event.client_payload.pull_request.number }}
           conclusion: ${{ job.status }}
