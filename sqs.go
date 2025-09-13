@@ -1,4 +1,4 @@
-// Generated from service/sqs/v1.42.3
+// Generated from service/sqs/v1.42.5
 
 package sqsextendedclient
 
@@ -396,7 +396,7 @@ type SQSClient interface {
 	//
 	// The maximum allowed individual message size and the maximum total payload size
 	// (the sum of the individual lengths of all of the batched messages) are both 1
-	// MiB (1,048,576 bytes).
+	// MiB 1,048,576 bytes.
 	//
 	// A message can include only XML, JSON, and unformatted text. The following
 	// Unicode characters are allowed. For more information, see the [W3C specification for characters].
