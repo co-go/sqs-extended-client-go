@@ -28,7 +28,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
-    sqsextendedclient "github.com/co-go/sqs-extended-client-go/v2"
+	sqsextendedclient "github.com/co-go/sqs-extended-client-go/v2"
 )
 
 const queueURL = "https://sqs.amazonaws.com/12345/testing-queue"
@@ -92,7 +92,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
-    sqsextendedclient "github.com/co-go/sqs-extended-client-go/v2"
+	sqsextendedclient "github.com/co-go/sqs-extended-client-go/v2"
 )
 
 type Environment struct {
