@@ -2,21 +2,23 @@
 <img src="doc/logo.png" width="500px" />
 <h1>sqs-extended-client-go</h1>
 <i>Send and receive large messages through SQS via S3</i><br/><br/>
-<a href="https://goreportcard.com/report/github.com/co-go/sqs-extended-client-go"><img src="https://goreportcard.com/badge/github.com/co-go/sqs-extended-client-go"/></a> <a href="https://codecov.io/gh/co-go/sqs-extended-client-go"><img src="https://codecov.io/gh/co-go/sqs-extended-client-go/graph/badge.svg?token=OFGVL7Y8U5"/></a> <a href="https://pkg.go.dev/github.com/co-go/sqs-extended-client-go"><img src="https://pkg.go.dev/badge/github.com/co-go/sqs-extended-client-go.svg" alt="Go Reference"></a>
+<a href="https://goreportcard.com/report/github.com/co-go/sqs-extended-client-go"><img src="https://goreportcard.com/badge/github.com/co-go/sqs-extended-client-go"/></a> <a href="https://codecov.io/gh/co-go/sqs-extended-client-go"><img src="https://codecov.io/gh/co-go/sqs-extended-client-go/graph/badge.svg?token=OFGVL7Y8U5"/></a> <a href="https://pkg.go.dev/github.com/co-go/sqs-extended-client-go/v2"><img src="https://pkg.go.dev/badge/github.com/co-go/sqs-extended-client-go/v2.svg" alt="Go Reference"></a>
 </div>
 
-****
+---
 
 `sqs-extended-client-go` is an extension to the Amazon SQS client that enables sending and receiving messages up to 2GB via Amazon S3. It is very similar to the [SQS Extended Client for Java](https://github.com/awslabs/amazon-sqs-java-extended-client-lib), but has an adjusted API to be more Gopher friendly.
 
 The Extended Client also comes with a bit of extra functionality for dealing with SQS Events in Lambda. This all comes at no impact to the underlying Amazon SQS client- everything that is possible in the Amazon SQS Client, is possible in the Extended Client.
 
 ## Installation
+
 ```sh
-go get -u github.com/co-go/sqs-extended-client-go
+go get -u github.com/co-go/sqs-extended-client-go/v2
 ```
 
 ## Quick Start
+
 ```go
 import (
 	"context"
@@ -26,7 +28,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
-	sqsextendedclient "github.com/co-go/sqs-extended-client-go"
+    sqsextendedclient "github.com/co-go/sqs-extended-client-go/v2"
 )
 
 const queueURL = "https://sqs.amazonaws.com/12345/testing-queue"
@@ -75,9 +77,11 @@ func main() {
 ```
 
 ## Working with Lambda
-When using an [SQS queue as an event source for a Lambda function](https://docs.aws.amazon.com/lambda/latest/dg/with-sqs.html), the Lambda will be invoked on the configured interval with a batch of messages. Some of these messages might need to be fetched from S3 if they exceeded the limit of the queue and were sent with this (or another) SQS Extended Client. This is the use case for [`RetrieveLambdaEvent`](https://pkg.go.dev/github.com/co-go/sqs-extended-client-go#Client.RetrieveLambdaEvent). Very similar to [`RetrieveMessage`](https://pkg.go.dev/github.com/co-go/sqs-extended-client-go#Client.ReceiveMessage), it will parse any extended messages in the event and retrieve them from S3, returning a new event will the full payloads. If none of the events match the extended format, no action is taken!
+
+When using an [SQS queue as an event source for a Lambda function](https://docs.aws.amazon.com/lambda/latest/dg/with-sqs.html), the Lambda will be invoked on the configured interval with a batch of messages. Some of these messages might need to be fetched from S3 if they exceeded the limit of the queue and were sent with this (or another) SQS Extended Client. This is the use case for [`RetrieveLambdaEvent`](https://pkg.go.dev/github.com/co-go/sqs-extended-client-go/v2#Client.RetrieveLambdaEvent). Very similar to [`RetrieveMessage`](https://pkg.go.dev/github.com/co-go/sqs-extended-client-go/v2#Client.ReceiveMessage), it will parse any extended messages in the event and retrieve them from S3, returning a new event will the full payloads. If none of the events match the extended format, no action is taken!
 
 ### Example
+
 ```go
 import (
 	"context"
@@ -88,7 +92,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
-	sqsextendedclient "github.com/co-go/sqs-extended-client-go"
+    sqsextendedclient "github.com/co-go/sqs-extended-client-go/v2"
 )
 
 type Environment struct {
@@ -141,6 +145,7 @@ func main() {
 ```
 
 > [!NOTE]
+>
 > #### If you plan on processing extended events within a Lambda function
 >
 > When processing SQS events in a Lambda function, if the invocation doesn’t return an error (indicating success), AWS will delete the SQS messages from the queue to prevent re-processing. This is a good thing! However, due to the special way extended messages are deleted, if AWS deletes an extended message that has a linked payload in S3, **AWS will NOT delete the S3 payload**.
