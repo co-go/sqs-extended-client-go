@@ -151,3 +151,20 @@ func main() {
 > When processing SQS events in a Lambda function, if the invocation doesn’t return an error (indicating success), AWS will delete the SQS messages from the queue to prevent re-processing. This is a good thing! However, due to the special way extended messages are deleted, if AWS deletes an extended message that has a linked payload in S3, **AWS will NOT delete the S3 payload**.
 >
 > There are multiple different ways to solve this (S3 lifecycle policies, etc.), but the recommended way to ensure the entire message is always cleaned up after processing is to explicitly call the DeleteMessage (or DeleteMessageBatch) functions.
+
+## Advanced configuration options
+
+### Control S3 deletion behavior
+
+By default, when extended messages are deleted from SQS, their corresponding S3 payloads are also deleted. You can disable this behavior and leave object cleanup to S3 lifecycle policies or an external job using `WithSkipDeleteS3Payloads(true)`:
+
+```go
+sqsec, _ := sqsextendedclient.New(
+    sqs.NewFromConfig(awsCfg),
+    s3.NewFromConfig(awsCfg),
+	// keep S3 payloads when deleting the SQS messages
+    sqsextendedclient.WithSkipDeleteS3Payloads(true),
+)
+```
+
+This flag applies to both `DeleteMessage` and `DeleteMessageBatch`. Batch deletions only remove S3 objects for entries that SQS reports as successfully deleted.

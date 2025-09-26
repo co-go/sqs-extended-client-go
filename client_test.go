@@ -1403,3 +1403,58 @@ func TestClient_ChangeMessageVisibility(t *testing.T) {
 	})
 	assert.NoError(t, err)
 }
+
+func TestDeleteMessage_SkipS3Delete(t *testing.T) {
+	ms3c := &mockS3Client{&mock.Mock{}}
+	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
+	msqsc.On(
+		"DeleteMessage",
+		mock.Anything,
+		mock.MatchedBy(func(params *sqs.DeleteMessageInput) bool {
+			assert.Equal(t, "abcdefg", *params.ReceiptHandle)
+			return true
+		}),
+		mock.Anything,
+	).Return(&sqs.DeleteMessageOutput{}, nil)
+
+	c, err := New(msqsc, ms3c, WithSkipDeleteS3Payloads(true))
+	assert.NoError(t, err)
+
+	_, err = c.DeleteMessage(context.Background(), &sqs.DeleteMessageInput{
+		ReceiptHandle: aws.String("-..s3BucketName..-some-bucket-..s3BucketName..--..s3Key..-some-key-..s3Key..-abcdefg"),
+	})
+	assert.NoError(t, err)
+
+	// Ensure no S3 deletion occurred
+	ms3c.AssertNotCalled(t, "DeleteObject", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestDeleteMessageBatch_SkipS3Delete(t *testing.T) {
+	ms3c := &mockS3Client{&mock.Mock{}}
+	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
+	msqsc.On(
+		"DeleteMessageBatch",
+		mock.Anything,
+		mock.MatchedBy(func(params *sqs.DeleteMessageBatchInput) bool {
+			assert.Len(t, params.Entries, 2)
+			return true
+		}),
+		mock.Anything,
+	).Return(&sqs.DeleteMessageBatchOutput{
+		Successful: []types.DeleteMessageBatchResultEntry{{Id: aws.String("object_1")}, {Id: aws.String("object_2")}},
+	}, nil)
+
+	c, err := New(msqsc, ms3c, WithSkipDeleteS3Payloads(true))
+	assert.NoError(t, err)
+
+	_, err = c.DeleteMessageBatch(context.Background(), &sqs.DeleteMessageBatchInput{
+		Entries: []types.DeleteMessageBatchRequestEntry{
+			{Id: aws.String("object_1"), ReceiptHandle: aws.String("-..s3BucketName..-some-bucket-..s3BucketName..--..s3Key..-some-key-..s3Key..-abcdefg")},
+			{Id: aws.String("object_2"), ReceiptHandle: aws.String("-..s3BucketName..-alt-bucket-..s3BucketName..--..s3Key..-another-key-..s3Key..-hijklmn")},
+		},
+	})
+	assert.NoError(t, err)
+
+	// Ensure no S3 batch deletion occurred
+	ms3c.AssertNotCalled(t, "DeleteObjects", mock.Anything, mock.Anything, mock.Anything)
+}

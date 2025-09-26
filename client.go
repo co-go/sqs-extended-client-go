@@ -59,6 +59,7 @@ type Client struct {
 	messageSizeThreshold      int64
 	batchMessageSizeThreshold int64
 	alwaysThroughS3           bool
+	skipDeleteS3Payloads      bool
 	pointerClass              string
 	reservedAttrs             []string
 	objectPrefix              string
@@ -162,6 +163,16 @@ func WithBatchMessageSizeThreshold(size int) ClientOption {
 func WithAlwaysS3(alwaysS3 bool) ClientOption {
 	return func(c *Client) error {
 		c.alwaysThroughS3 = alwaysS3
+		return nil
+	}
+}
+
+// WithSkipDeleteS3Payloads disables deletion of S3 payloads when deleting SQS messages. Defaults to
+// false (meaning S3 payloads will be deleted). If set to true, S3 objects are left intact and
+// should be managed via lifecycle policies or external cleanup.
+func WithSkipDeleteS3Payloads(skip bool) ClientOption {
+	return func(c *Client) error {
+		c.skipDeleteS3Payloads = skip
 		return nil
 	}
 }
@@ -896,7 +907,7 @@ func (c *Client) DeleteMessage(ctx context.Context, params *sqs.DeleteMessageInp
 		return nil, err
 	}
 
-	if bucket != "" && key != "" {
+	if !c.skipDeleteS3Payloads && bucket != "" && key != "" {
 		_, err = c.s3c.DeleteObject(ctx, &s3.DeleteObjectInput{
 			Bucket: &bucket,
 			Key:    &key,
@@ -982,16 +993,18 @@ func (c *Client) DeleteMessageBatch(ctx context.Context, params *sqs.DeleteMessa
 		})
 	}
 
-	// Delete objects in each bucket in parallel
-	for bucket, objects := range bucketObjects {
-		bucket, objects := bucket, objects
-		g.Go(func() error {
-			_, err := c.s3c.DeleteObjects(ctx, &s3.DeleteObjectsInput{
-				Bucket: &bucket,
-				Delete: &s3types.Delete{Objects: objects},
+	if !c.skipDeleteS3Payloads {
+		// Delete objects in each bucket in parallel
+		for bucket, objects := range bucketObjects {
+			bucket, objects := bucket, objects
+			g.Go(func() error {
+				_, err := c.s3c.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+					Bucket: &bucket,
+					Delete: &s3types.Delete{Objects: objects},
+				})
+				return err
 			})
-			return err
-		})
+		}
 	}
 
 	return resp, g.Wait()
