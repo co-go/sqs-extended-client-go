@@ -947,6 +947,56 @@ func TestReceiveMessageS3Error(t *testing.T) {
 	assert.ErrorContains(t, err, "error when reading from s3 (test-bucket/test-item)")
 }
 
+func TestReceiveMessage_DiscardOrphanedExtendedMessages(t *testing.T) {
+	// setup SQS to return one extended message
+	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
+	msqsc.
+		On("ReceiveMessage", mock.Anything, mock.Anything, mock.Anything).
+		Return(&sqs.ReceiveMessageOutput{Messages: []types.Message{
+			{
+				Body:              aws.String(getDefaultS3Pointer("test-bucket", "test-event")),
+				MessageAttributes: map[string]types.MessageAttributeValue{"ExtendedPayloadSize": {}},
+				ReceiptHandle:     aws.String("mock-handle-123"),
+			},
+			{
+				Body:              aws.String(getDefaultS3Pointer("test-bucket", "missing-key")),
+				MessageAttributes: map[string]types.MessageAttributeValue{"ExtendedPayloadSize": {}},
+				ReceiptHandle:     aws.String("mock-handle-789"),
+			},
+		}}, nil)
+
+	// GetObject returns NoSuchKey; client should delete message and drop it
+	ms3c := &mockS3Client{&mock.Mock{}}
+	ms3c.
+		On("GetObject", mock.Anything, mock.MatchedBy(func(in *s3.GetObjectInput) bool { return *in.Key == "test-event" }), mock.Anything).
+		Return(&s3.GetObjectOutput{Body: io.NopCloser(strings.NewReader("object1"))}, nil)
+
+	ms3c.
+		On("GetObject", mock.Anything, mock.MatchedBy(func(in *s3.GetObjectInput) bool { return *in.Key == "missing-key" }), mock.Anything).
+		Return(&s3.GetObjectOutput{}, &s3types.NoSuchKey{})
+
+	// expect a delete on the underlying SQS client
+	msqsc.On(
+		"DeleteMessage",
+		mock.Anything,
+		mock.MatchedBy(func(params *sqs.DeleteMessageInput) bool {
+			return *params.ReceiptHandle == "mock-handle-789"
+		}),
+		mock.Anything,
+	).Return(&sqs.DeleteMessageOutput{}, nil)
+
+	c, err := New(msqsc, ms3c, WithDiscardOrphanedExtendedMessages(true))
+	assert.NoError(t, err)
+
+	resp, err := c.ReceiveMessage(context.Background(), &sqs.ReceiveMessageInput{})
+	assert.NoError(t, err)
+	assert.Len(t, resp.Messages, 1)
+	assert.Equal(t, "object1", *resp.Messages[0].Body)
+	assert.Equal(t, "-..s3BucketName..-test-bucket-..s3BucketName..--..s3Key..-test-event-..s3Key..-mock-handle-123", *resp.Messages[0].ReceiptHandle)
+	msqsc.AssertExpectations(t)
+	ms3c.AssertExpectations(t)
+}
+
 func TestReceiveMessageReadError(t *testing.T) {
 	msqsc := &mockSQSClient{Mock: &mock.Mock{}}
 	msqsc.
@@ -1030,6 +1080,40 @@ func TestRetrieveLambdaEvent(t *testing.T) {
 	assert.Equal(t, "something-else", resp.Records[1].ReceiptHandle)
 	assert.Equal(t, "object2", resp.Records[2].Body)
 	assert.Equal(t, "-..s3BucketName..-test-bucket-2-..s3BucketName..--..s3Key..-test-event-2-..s3Key..-mock-handle-123", resp.Records[2].ReceiptHandle)
+}
+
+func TestRetrieveLambdaEvent_DiscardOrphanedExtendedMessages(t *testing.T) {
+	ms3c := &mockS3Client{&mock.Mock{}}
+	// first object exists, second is missing
+	ms3c.
+		On("GetObject", mock.Anything, mock.MatchedBy(func(in *s3.GetObjectInput) bool { return *in.Key == "test-event" }), mock.Anything).
+		Return(&s3.GetObjectOutput{Body: io.NopCloser(strings.NewReader("object1"))}, nil)
+
+	ms3c.
+		On("GetObject", mock.Anything, mock.MatchedBy(func(in *s3.GetObjectInput) bool { return *in.Key == "missing-event" }), mock.Anything).
+		Return(&s3.GetObjectOutput{}, &s3types.NoSuchKey{})
+
+	c, err := New(nil, ms3c, WithDiscardOrphanedExtendedMessages(true))
+	assert.NoError(t, err)
+
+	resp, err := c.RetrieveLambdaEvent(context.Background(), &events.SQSEvent{
+		Records: []events.SQSMessage{
+			{
+				Body:              getDefaultS3Pointer("test-bucket", "test-event"),
+				MessageAttributes: map[string]events.SQSMessageAttribute{"ExtendedPayloadSize": {}},
+				ReceiptHandle:     "something-or-other",
+			},
+			{
+				Body:              getDefaultS3Pointer("test-bucket", "missing-event"),
+				MessageAttributes: map[string]events.SQSMessageAttribute{"ExtendedPayloadSize": {}},
+				ReceiptHandle:     "other",
+			},
+		},
+	})
+	assert.NoError(t, err)
+	assert.Len(t, resp.Records, 1)
+	assert.Equal(t, "object1", resp.Records[0].Body)
+	ms3c.AssertExpectations(t)
 }
 
 func TestRetrieveLambdaEventJSONError(t *testing.T) {

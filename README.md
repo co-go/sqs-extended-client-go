@@ -162,9 +162,22 @@ By default, when extended messages are deleted from SQS, their corresponding S3 
 sqsec, _ := sqsextendedclient.New(
     sqs.NewFromConfig(awsCfg),
     s3.NewFromConfig(awsCfg),
-	// keep S3 payloads when deleting the SQS messages
     sqsextendedclient.WithSkipDeleteS3Payloads(true),
 )
 ```
 
 This flag applies to both `DeleteMessage` and `DeleteMessageBatch`. Batch deletions only remove S3 objects for entries that SQS reports as successfully deleted.
+
+### Discard orphaned extended messages
+
+If an extended message’s S3 payload cannot be found when calling `ReceiveMessage` or `RetrieveLambdaEvent`, by default we will return this error to be handled by you. Sometimes this can be expected (for example, removed via lifecycle policy). You can opt-in to swallow the errors and discard such messages by setting the `WithDiscardOrphanedExtendedMessages` flag.
+
+```go
+sqsec, _ := sqsextendedclient.New(
+    sqs.NewFromConfig(awsCfg),
+    s3.NewFromConfig(awsCfg),
+    sqsextendedclient.WithDiscardOrphanedExtendedMessages(true),
+)
+```
+
+When enabled, if reading from S3 returns a `NoSuchKey` error, the client will best-effort delete the message from SQS and omit it from the returned set. This has no impact on any other errors, as those will still be returned back. When disabled (default), all errors (including `NoSuchKey`) are returned to the caller.
