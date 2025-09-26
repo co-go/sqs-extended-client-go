@@ -3,6 +3,7 @@ package sqsextendedclient
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"math/rand"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/stretchr/testify/assert"
@@ -80,6 +82,8 @@ func createExtendedPayload() string {
 	return createPayload(maxMessageSize + 1)
 }
 
+// verify some behaviors from AWS are working as expected so that the extended client can operate
+// within expected invariants
 func TestBaselineExtendedPayloadIntegration(t *testing.T) {
 	i := startIntegrationTest(t)
 
@@ -90,6 +94,25 @@ func TestBaselineExtendedPayloadIntegration(t *testing.T) {
 
 	// ensure that oversized payloads will fail to be sent to sqs
 	assert.ErrorContains(t, err, "Message must be shorter than 1048576 bytes")
+
+	// missing key in accessible test bucket should return typed NoSuchKey
+	_, err = i.s3c.GetObject(context.Background(), &s3.GetObjectInput{
+		Bucket: &i.bucketName,
+		Key:    aws.String("definitely-missing-object-key"),
+	})
+
+	var noSuchKey *s3types.NoSuchKey
+	assert.Error(t, err)
+	assert.True(t, errors.As(err, &noSuchKey), "expected NoSuchKey for missing object")
+
+	_, err = i.s3c.GetObject(context.Background(), &s3.GetObjectInput{
+		Bucket: aws.String("no-access-bucket"),
+		Key:    aws.String("some-object"),
+	})
+
+	// should not be NoSuchKey; expected AccessDenied error
+	assert.Error(t, err)
+	assert.False(t, errors.As(err, &noSuchKey), "should not be NoSuchKey for access denied case")
 }
 
 func TestCoreFunctionalityIntegration(t *testing.T) {
@@ -205,7 +228,7 @@ func TestCoreFunctionalityIntegration(t *testing.T) {
 	}
 }
 
-func TestBatchFunctionality(t *testing.T) {
+func TestBatchFunctionalityIntegration(t *testing.T) {
 	i := startIntegrationTest(t)
 
 	payloads := []string{createPayload(50), createExtendedPayload()}

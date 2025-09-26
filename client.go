@@ -53,18 +53,19 @@ type Logger interface {
 // functionality for retrieving, sending and deleting messages.
 type Client struct {
 	SQSClient
-	s3c                       S3Client
-	logger                    Logger
-	bucketName                string
-	messageSizeThreshold      int64
-	batchMessageSizeThreshold int64
-	alwaysThroughS3           bool
-	skipDeleteS3Payloads      bool
-	pointerClass              string
-	reservedAttrs             []string
-	objectPrefix              string
-	baseS3PointerSize         int
-	baseAttributeSize         int
+	s3c                             S3Client
+	logger                          Logger
+	bucketName                      string
+	messageSizeThreshold            int64
+	batchMessageSizeThreshold       int64
+	alwaysThroughS3                 bool
+	skipDeleteS3Payloads            bool
+	discardOrphanedExtendedMessages bool
+	pointerClass                    string
+	reservedAttrs                   []string
+	objectPrefix                    string
+	baseS3PointerSize               int
+	baseAttributeSize               int
 }
 
 type ClientOption func(*Client) error
@@ -173,6 +174,17 @@ func WithAlwaysS3(alwaysS3 bool) ClientOption {
 func WithSkipDeleteS3Payloads(skip bool) ClientOption {
 	return func(c *Client) error {
 		c.skipDeleteS3Payloads = skip
+		return nil
+	}
+}
+
+// WithDiscardOrphanedExtendedMessages configures the client to discard messages that reference
+// missing S3 payloads (NoSuchKey) and proactively delete them from SQS during
+// [*Client.ReceiveMessage] or [*Client.RetrieveLambdaEvent]. Default is false (which means errors
+// will be surfaced and message will not be discarded).
+func WithDiscardOrphanedExtendedMessages(discard bool) ClientOption {
+	return func(c *Client) error {
+		c.discardOrphanedExtendedMessages = discard
 		return nil
 	}
 }
@@ -732,6 +744,18 @@ func (c *Client) ReceiveMessage(ctx context.Context, params *sqs.ReceiveMessageI
 			})
 
 			if err != nil {
+				// if configured, drop messages whose S3 payload is missing (types.NoSuchKey)
+				var noSuchKey *s3types.NoSuchKey
+				if c.discardOrphanedExtendedMessages && errors.As(err, &noSuchKey) {
+					// best-effort delete the orphaned SQS message and drop it from results
+					_, _ = c.SQSClient.DeleteMessage(ctx, &sqs.DeleteMessageInput{
+						QueueUrl:      input.QueueUrl,
+						ReceiptHandle: m.ReceiptHandle,
+					})
+					// omit this message by setting it to empty
+					sqsResp.Messages[i] = types.Message{}
+					return nil
+				}
 				return fmt.Errorf("error when reading from s3 (%s/%s): %w", ptr.S3BucketName, ptr.S3Key, err)
 			}
 
@@ -752,6 +776,18 @@ func (c *Client) ReceiveMessage(ctx context.Context, params *sqs.ReceiveMessageI
 
 	if err := g.Wait(); err != nil {
 		return nil, err
+	}
+
+	// if we discarded any orphaned messages, filter out zero-value entries
+	if c.discardOrphanedExtendedMessages {
+		filtered := make([]types.Message, 0, len(sqsResp.Messages))
+		for _, m := range sqsResp.Messages {
+			if m.Body == nil && m.ReceiptHandle == nil && len(m.MessageAttributes) == 0 {
+				continue
+			}
+			filtered = append(filtered, m)
+		}
+		sqsResp.Messages = filtered
 	}
 
 	return sqsResp, nil
@@ -809,6 +845,13 @@ func (c *Client) RetrieveLambdaEvent(ctx context.Context, evt *events.SQSEvent) 
 			})
 
 			if err != nil {
+				// if configured, drop messages whose S3 payload is missing (types.NoSuchKey)
+				var noSuchKey *s3types.NoSuchKey
+				if c.discardOrphanedExtendedMessages && errors.As(err, &noSuchKey) {
+					// best-effort delete the orphaned SQS message and drop it from results
+					copyRecords[i] = events.SQSMessage{}
+					return nil
+				}
 				return fmt.Errorf("error when reading from s3 (%s/%s): %w", ptr.S3BucketName, ptr.S3Key, err)
 			}
 
@@ -831,7 +874,19 @@ func (c *Client) RetrieveLambdaEvent(ctx context.Context, evt *events.SQSEvent) 
 	}
 
 	dup := *evt
-	dup.Records = copyRecords
+	// if we discarded any orphaned messages, filter out zero-value entries
+	if c.discardOrphanedExtendedMessages {
+		filtered := make([]events.SQSMessage, 0, len(copyRecords))
+		for _, rec := range copyRecords {
+			if rec.Body == "" && rec.ReceiptHandle == "" && len(rec.MessageAttributes) == 0 {
+				continue
+			}
+			filtered = append(filtered, rec)
+		}
+		dup.Records = filtered
+	} else {
+		dup.Records = copyRecords
+	}
 	return &dup, nil
 }
 
