@@ -954,6 +954,11 @@ func TestReceiveMessage_DiscardOrphanedExtendedMessages(t *testing.T) {
 		On("ReceiveMessage", mock.Anything, mock.Anything, mock.Anything).
 		Return(&sqs.ReceiveMessageOutput{Messages: []types.Message{
 			{
+				Body:              aws.String(getDefaultS3Pointer("test-bucket", "test-event")),
+				MessageAttributes: map[string]types.MessageAttributeValue{"ExtendedPayloadSize": {}},
+				ReceiptHandle:     aws.String("mock-handle-123"),
+			},
+			{
 				Body:              aws.String(getDefaultS3Pointer("test-bucket", "missing-key")),
 				MessageAttributes: map[string]types.MessageAttributeValue{"ExtendedPayloadSize": {}},
 				ReceiptHandle:     aws.String("mock-handle-789"),
@@ -962,7 +967,13 @@ func TestReceiveMessage_DiscardOrphanedExtendedMessages(t *testing.T) {
 
 	// GetObject returns NoSuchKey; client should delete message and drop it
 	ms3c := &mockS3Client{&mock.Mock{}}
-	ms3c.On("GetObject", mock.Anything, mock.Anything, mock.Anything).Return(&s3.GetObjectOutput{}, &s3types.NoSuchKey{})
+	ms3c.
+		On("GetObject", mock.Anything, mock.MatchedBy(func(in *s3.GetObjectInput) bool { return *in.Key == "test-event" }), mock.Anything).
+		Return(&s3.GetObjectOutput{Body: io.NopCloser(strings.NewReader("object1"))}, nil)
+
+	ms3c.
+		On("GetObject", mock.Anything, mock.MatchedBy(func(in *s3.GetObjectInput) bool { return *in.Key == "missing-key" }), mock.Anything).
+		Return(&s3.GetObjectOutput{}, &s3types.NoSuchKey{})
 
 	// expect a delete on the underlying SQS client
 	msqsc.On(
@@ -979,7 +990,9 @@ func TestReceiveMessage_DiscardOrphanedExtendedMessages(t *testing.T) {
 
 	resp, err := c.ReceiveMessage(context.Background(), &sqs.ReceiveMessageInput{})
 	assert.NoError(t, err)
-	assert.Len(t, resp.Messages, 0)
+	assert.Len(t, resp.Messages, 1)
+	assert.Equal(t, "object1", *resp.Messages[0].Body)
+	assert.Equal(t, "-..s3BucketName..-test-bucket-..s3BucketName..--..s3Key..-test-event-..s3Key..-mock-handle-123", *resp.Messages[0].ReceiptHandle)
 	msqsc.AssertExpectations(t)
 	ms3c.AssertExpectations(t)
 }
