@@ -2,7 +2,7 @@ module github.com/co-go/sqs-extended-client-go/v2
 
 go 1.24.0
 
-toolchain go1.25.1
+toolchain go1.25.2
 
 require (
 	github.com/aws/aws-lambda-go v1.49.0
