@@ -27,7 +27,7 @@ jobs:
       run: make generate_sqs
 
     - name: Commit Change
-      uses: stefanzweifel/git-auto-commit-action@v6
+      uses: stefanzweifel/git-auto-commit-action@v7
       with:
         commit_user_name: co-go
         commit_user_email: jcorley.w@gmail.com
