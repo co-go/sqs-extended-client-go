@@ -12,7 +12,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.42.21
 	github.com/google/uuid v1.6.0
 	github.com/stretchr/testify v1.11.1
-	golang.org/x/sync v0.17.0
+	golang.org/x/sync v0.19.0
 )
 
 require (
