@@ -24,7 +24,7 @@ jobs:
           go-version: "1.25"
 
       - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v5
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: us-east-1
           role-to-assume: arn:aws:iam::520156417308:role/github-action-auth-Role-MJSGfkUydl2D
