@@ -10,17 +10,32 @@
     ":automergeBranch"
   ],
   "automerge": true,
-  "postUpdateOptions": ["gomodTidy"],
+  "postUpdateOptions": [
+    "gomodTidy"
+  ],
   "packageRules": [
     {
-      "extends": "monorepo:aws-sdk-go-v2",
+      "extends": [
+        "monorepo:aws-sdk-go-v2"
+      ],
       "groupName": "aws-sdk-go-v2 monorepo",
-      "excludePackageNames": ["github.com/aws/aws-sdk-go-v2/service/sqs"],
-      "matchUpdateTypes": ["digest", "patch", "minor", "major"]
+      "matchUpdateTypes": [
+        "digest",
+        "patch",
+        "minor",
+        "major"
+      ],
+      "matchPackageNames": [
+        "!github.com/aws/aws-sdk-go-v2/service/sqs"
+      ]
     },
     {
-      "extends": [":automergeDisabled"],
-      "matchPackageNames": ["github.com/aws/aws-sdk-go-v2/service/sqs"]
+      "extends": [
+        ":automergeDisabled"
+      ],
+      "matchPackageNames": [
+        "github.com/aws/aws-sdk-go-v2/service/sqs"
+      ]
     }
   ]
 }
