@@ -7,6 +7,11 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+# All runs share one SQS queue, so concurrent runs can receive each other's messages
+concurrency:
+  group: integration-tests
+  cancel-in-progress: false
+
 jobs:
   test:
     runs-on: ubuntu-latest
